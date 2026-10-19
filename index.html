@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="description" content="青溪小筑 —— 一个用 three.js 制作的治愈系 3D 田园小游戏：种田、浇水、钓鱼、探索。">
+<title>青溪小筑 · 治愈系田园小游戏</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8C%B1%3C/text%3E%3C/svg%3E">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #e9dcc0; }
+  canvas#game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; touch-action: none; }
+</style>
+<!--DEV-->
+<script type="importmap">{ "imports": { "three": "./node_modules/three/build/three.module.js", "three/examples/jsm/": "./node_modules/three/examples/jsm/" } }</script>
+<!--/DEV-->
+</head>
+<body>
+<!--APP-->
+<script type="module" src="./src/main.js"></script>
+<!--/APP-->
+</body>
+</html>

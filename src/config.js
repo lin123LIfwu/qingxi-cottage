@@ -1,0 +1,16 @@
+export const WORLD_SIZE = 260;
+export const WORLD_HALF = 130;
+export const WORLD_SEG = 300;
+export const PLAY_HALF = 84;
+export const HOME_H = 1.55;
+export const CABIN = { x: 0, z: -13, w: 6.6, d: 5.4 };
+export const FARM = { x0: 7, x1: 17, z0: -17, z1: -7, gateX0: 11, gateX1: 13 };
+export const POND = { x: -22, z: -6, r: 9, level: 0.95, depth: 2.4 };
+export const SPAWN = { x: 1.2, z: -4.5, yaw: Math.PI };
+export const SHOP = { x: -6.8, z: -6.4 };
+export const BIN = { x: 5.4, z: -6.2 };
+export const BARREL = { x: 15.2, z: -5.9 };
+export const DOCK = { x0: -11.2, x1: -19.2, z: -3.6, w: 1.7 };
+export const RIVER_PTS = [[64,-128],[59,-98],[51,-74],[45,-52],[40,-31],[35,-12],[30,6],[20,22],[6,32],[-12,38],[-32,44],[-52,54],[-70,70],[-88,92],[-110,120]];
+export const GAME_DAY_REAL_MIN = 16; // real minutes per game day (at 1x)
+export const MINUTES_PER_SEC = 1440 / (GAME_DAY_REAL_MIN * 60);

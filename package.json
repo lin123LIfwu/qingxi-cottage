@@ -1,0 +1,17 @@
+{
+  "name": "qingxi-cottage",
+  "version": "1.0.0",
+  "description": "青溪小筑 —— three.js 治愈系 3D 田园小游戏（种田 / 浇水 / 钓鱼 / 探索）",
+  "main": "src/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "npx esbuild --servedir=. --serve=5173"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "three": "^0.186.1"
+  },
+  "private": true
+}
