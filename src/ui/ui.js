@@ -51,9 +51,10 @@ export class UI {
     this.speedEl.addEventListener('click', () => { this.g.cycleSpeed(); this.g.sfx('click'); });
     const tr = el('div', 'hud-tr'); r.appendChild(tr); this.hudTR = tr;
     const row = el('div', 'btnrow'); tr.appendChild(row);
-    for (const [id, icon, key, title] of [['bag', 'bag', 'Tab', '背包'], ['log', 'book', 'L', '图鉴'], ['settings', 'gear', 'Esc', '设置'], ['help', 'help', 'H', '帮助']]) {
+    for (const [id, icon, key, title] of [['view', 'eye', 'V', '切换第一 / 第三人称视角'], ['bag', 'bag', 'Tab', '背包'], ['log', 'book', 'L', '图鉴'], ['settings', 'gear', 'Esc', '设置'], ['help', 'help', 'H', '帮助']]) {
       const b = el('div', 'card ibtn pe', `${ICONS[icon]}<span class="k">${key}</span>`); b.title = title;
-      b.addEventListener('click', () => { this.g.sfx('open'); this.open(id); });
+      if (id === 'view') { b.addEventListener('click', () => this.g.toggleView()); this.viewBtn = b; }
+      else b.addEventListener('click', () => { this.g.sfx('open'); this.open(id); });
       row.appendChild(b);
     }
     this.mapWrap = el('div', 'card minimap'); this.mapCanvas = el('canvas'); this.mapCanvas.width = 344; this.mapCanvas.height = 344;
@@ -68,8 +69,10 @@ export class UI {
     this.toolName = el('div', 'toolname'); r.appendChild(this.toolName);
     this.promptEl = el('div', 'card prompt'); r.appendChild(this.promptEl);
     this.toasts = el('div', 'toasts'); r.appendChild(this.toasts);
-    this.hintEl = el('div', 'card hint', `<b>WASD</b> 移动　<b>Shift</b> 奔跑　<b>空格</b> 跳跃<br><b>鼠标左键</b> 使用工具　<b>E</b> 互动/收获<br><b>拖动鼠标</b> 旋转视角　<b>滚轮</b> 缩放<br><b>1–9</b> 切换工具和种子`);
-    r.appendChild(this.hintEl);
+    this.hintEl = el('div', 'card hint'); r.appendChild(this.hintEl);
+    this.xhair = el('div', 'xhair'); r.appendChild(this.xhair);
+    this.lockHint = el('div', 'card lockhint', '🖱️ 点击画面开始环顾'); r.appendChild(this.lockHint);
+    this.renderViewState();
   }
   renderHotbar() {
     const S = this.g.S;
@@ -116,6 +119,22 @@ export class UI {
     const hint = !!S.settings.showHints;
     if (L.hint !== hint) { this.hintEl.style.display = hint ? '' : 'none'; L.hint = hint; }
   }
+  // first / third person: hint text and the view button
+  renderViewState() {
+    const fp = this.g.S.settings.view === 'first';
+    if (this.last && this.last.view === fp) return;
+    if (this.last) this.last.view = fp;
+    this.hintEl.innerHTML = fp
+      ? `<b>WASD</b> 移动　<b>Shift</b> 奔跑　<b>空格</b> 跳跃<br><b>鼠标左键</b> 使用工具　<b>E</b> 互动/收获<br><b>移动鼠标</b> 环顾　<b>Esc</b> 释放鼠标<br><b>1–9</b> 切换工具　<b>V</b> 第三人称`
+      : `<b>WASD</b> 移动　<b>Shift</b> 奔跑　<b>空格</b> 跳跃<br><b>鼠标左键</b> 使用工具　<b>E</b> 互动/收获<br><b>拖动鼠标</b> 旋转视角　<b>滚轮</b> 缩放<br><b>1–9</b> 切换工具　<b>V</b> 第一人称`;
+    if (this.viewBtn) { this.viewBtn.classList.toggle('on', fp); this.viewBtn.title = fp ? '切换到第三人称（V）' : '切换到第一人称（V）'; }
+  }
+  // crosshair + "click to look around" card while in first person
+  setFPState(on, locked, dragLook) {
+    const L = this.last, x = !!on, h = !!(on && !locked && !dragLook);
+    if (L.xh !== x) { this.xhair.classList.toggle('show', x); L.xh = x; }
+    if (L.lh !== h) { this.lockHint.classList.toggle('show', h); L.lh = h; }
+  }
   setPrompt(html) {
     if (this.last.prompt === html) return;
     this.last.prompt = html;
@@ -130,7 +149,7 @@ export class UI {
     setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 420); }, 2400);
   }
   setHUDVisible(v) {
-    for (const e of [this.hudTL, this.hudTR, this.hotbar, this.hintEl, this.promptEl, this.toolName]) e.style.visibility = v ? '' : 'hidden';
+    for (const e of [this.hudTL, this.hudTR, this.hotbar, this.hintEl, this.promptEl, this.toolName, this.xhair, this.lockHint]) e.style.visibility = v ? '' : 'hidden';
   }
   // ------------------------------------------------------------------ minimap
   initMinimap(T, pois) {
@@ -390,6 +409,13 @@ export class UI {
       inp.addEventListener('input', () => this.g.setSetting(key, +inp.value));
       row.appendChild(inp); body.push(row);
     }
+    body.push(seg('视角', 'view', [['third', '第三人称'], ['first', '第一人称']]));
+    {
+      const row = el('div', 'set', `<label>鼠标灵敏度</label>`);
+      const inp = el('input'); inp.type = 'range'; inp.min = 0.3; inp.max = 2.5; inp.step = 0.05; inp.value = st.sens ?? 1;
+      inp.addEventListener('input', () => this.g.setSetting('sens', +inp.value));
+      row.appendChild(inp); body.push(row);
+    }
     body.push(seg('时间流速', 'speed', [[1, '1×'], [2, '2×'], [4, '4×']]));
     body.push(seg('操作提示', 'showHints', [[true, '显示'], [false, '隐藏']]));
     body.push(el('div', 'empty-note', `游戏每 30 秒和每次睡觉时会自动保存在本机浏览器中。当前画质：${this.g.qualityName()}`));
@@ -403,6 +429,7 @@ export class UI {
       <tr><td>鼠标左键 / <kbd>F</kbd></td><td>使用手中的工具（开垦、浇水、播种、抛竿）</td></tr>
       <tr><td><kbd>E</kbd></td><td>互动：收获成熟的作物、开店、出货、睡觉、装水</td></tr>
       <tr><td>拖动鼠标 / <kbd>Q</kbd><kbd>R</kbd></td><td>旋转视角；滚轮缩放</td></tr>
+      <tr><td><kbd>V</kbd> / 滚轮拉到最近</td><td>切换第一人称：点击画面锁定鼠标后，移动鼠标环顾、准星对准要耕种的地块；<kbd>Esc</kbd> 释放鼠标，再按 <kbd>V</kbd> 或向外滚动滚轮回到第三人称</td></tr>
       <tr><td><kbd>1</kbd> – <kbd>9</kbd> / 滚轮+Alt</td><td>切换锄头、水壶、鱼竿和种子</td></tr>
       <tr><td><kbd>Tab</kbd> <kbd>L</kbd> <kbd>M</kbd> <kbd>Esc</kbd></td><td>背包 / 图鉴 / 小地图 / 设置</td></tr></table>
       <h3>🌱 种田</h3>

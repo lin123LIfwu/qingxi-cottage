@@ -15,7 +15,7 @@ export function defaultState() {
     player: null,
     tool: 0,
     stats: { harvested: 0, fishCaught: 0, earned: 0, tilled: 0, daysPlayed: 1 },
-    settings: { quality: 'auto', music: 0.45, sfx: 0.75, speed: 1, showHints: true },
+    settings: { quality: 'auto', music: 0.45, sfx: 0.75, speed: 1, showHints: true, view: 'third', sens: 1 },
     dayEarned: 0,
     started: false,
   };

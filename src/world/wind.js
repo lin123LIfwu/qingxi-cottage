@@ -11,7 +11,7 @@ export function patchVeg(mat, U, o = {}) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = U.uTime; sh.uniforms.uWind = U.uWind; sh.uniforms.uPlayerPos = U.uPlayerPos;
     sh.uniforms.uSunDir = U.uSunDir; sh.uniforms.uSunColor = U.uSunColor;
-    if (o.occlude) { sh.uniforms.uFocus = U.uFocus; sh.uniforms.uOccR = U.uOccR; sh.uniforms.uOccK = U.uOccK; }
+    if (o.occlude) { sh.uniforms.uFocus = U.uFocus; sh.uniforms.uOccR = U.uOccR; sh.uniforms.uOccK = U.uOccK; sh.uniforms.uNearF = U.uNearF || { value: new THREE.Vector2(1.4, 2.8) }; }
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
 uniform float uTime; uniform vec2 uWind; uniform vec3 uPlayerPos;
@@ -83,7 +83,7 @@ vec4 worldPosition = vec4(vWP, 1.0);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
 uniform vec3 uSunDir; uniform vec3 uSunColor;
-${o.occlude ? 'uniform vec3 uFocus; uniform float uOccR; uniform float uOccK;' : ''}
+${o.occlude ? 'uniform vec3 uFocus; uniform float uOccR; uniform float uOccK; uniform vec2 uNearF;' : ''}
 varying vec3 vWP; varying float vH; varying float vTint;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 diffuseColor.rgb *= vTint;
@@ -92,7 +92,7 @@ ${o.occlude ? `{
   vec3 seg = uFocus - cameraPosition; float L = length(seg); vec3 dr = seg / max(L, 1e-3);
   vec3 rel = vWP - cameraPosition; float tt = dot(rel, dr); float perp = length(rel - dr * tt);
   float occ = (1.0 - smoothstep(uOccR * 0.55, uOccR, perp)) * smoothstep(0.2, 0.8, tt) * (1.0 - smoothstep(L - 1.8, L - 0.7, tt));
-  float nearK = 1.0 - smoothstep(1.4, 2.8, length(rel));
+  float nearK = 1.0 - smoothstep(uNearF.x, uNearF.y, length(rel));
   float kk = max(occ * uOccK, nearK);
   float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   if (kk > dth) discard;

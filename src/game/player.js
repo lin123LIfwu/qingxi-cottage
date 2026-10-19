@@ -155,9 +155,32 @@ export class Player {
     for (const k in this.tools) this.tools[k].visible = (k === t) && k !== 'fish';
   }
   showFishModel(mesh) {
-    const f = this.tools.fish;
+    this.heldFish = mesh || null;
+    this.placeHeldFish();
+  }
+  // the caught fish goes into the first-person hands or the third-person hand
+  placeHeldFish() {
+    const f = this.tools.fish, m = this.heldFish, vm = this.vm;
+    const inVM = !!(m && vm && this.fpActive);
+    if (vm && vm.fish && (!inVM || vm.fish !== m)) vm.releaseFish();
     while (f.children.length) f.remove(f.children[0]);
-    if (mesh) { f.add(mesh); f.visible = true; } else f.visible = false;
+    if (!m) { f.visible = false; return; }
+    if (inVM) { f.visible = false; vm.holdFish(m); }
+    else { f.add(m); f.visible = true; }
+  }
+  // first person: hide the body from the camera (it keeps casting its shadow) and hand the
+  // tool-tip / spout / held-fish queries over to the view model
+  setFirstPerson(on, vm) {
+    if (vm) this.vm = vm;
+    if (!!this.fpActive === on) return;
+    this.fpActive = on;
+    this.placeHeldFish();
+    if (!this.hideMat) this.hideMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    this.root.traverse(o => {
+      if (!o.isMesh) return;
+      if (on) { if (!o.userData.mat0) { o.userData.mat0 = o.material; o.material = this.hideMat; } }
+      else if (o.userData.mat0) { o.material = o.userData.mat0; delete o.userData.mat0; }
+    });
   }
   place(x, z, yaw) {
     // never drop the player into deep water / inside a wall: spiral out to the nearest valid spot
@@ -210,7 +233,9 @@ export class Player {
     const tvx = mx * maxSp, tvz = mz * maxSp;
     const acc = (mx || mz) ? 10 : 12;
     this.vel.x = damp(this.vel.x, tvx, acc, dt); this.vel.z = damp(this.vel.z, tvz, acc, dt);
-    if (mx || mz) this.yaw = dampAngle(this.yaw, Math.atan2(mx, mz), 12, dt);
+    // first person: the body always faces where the camera looks (strafing keeps the facing)
+    if (input.face !== undefined && input.face !== null) this.yaw = dampAngle(this.yaw, input.face, 30, dt);
+    else if (mx || mz) this.yaw = dampAngle(this.yaw, Math.atan2(mx, mz), 12, dt);
     // ---- horizontal move with checks ----
     const cur = this.pos;
     const curH = T.groundHeight(cur.x, cur.z);
@@ -353,6 +378,6 @@ export class Player {
   }
 
   // world positions helpers
-  rodTipWorld(out) { this.root.updateMatrixWorld(true); return this.rodTip.getWorldPosition(out); }
-  spoutWorld(out) { this.root.updateMatrixWorld(true); return this.spout.getWorldPosition(out); }
+  rodTipWorld(out) { if (this.fpActive && this.vm) return this.vm.rodTipWorld(out); this.root.updateMatrixWorld(true); return this.rodTip.getWorldPosition(out); }
+  spoutWorld(out) { if (this.fpActive && this.vm) return this.vm.spoutWorld(out); this.root.updateMatrixWorld(true); return this.spout.getWorldPosition(out); }
 }

@@ -210,6 +210,8 @@ void main() {
     vec2 uvp = cp.xy / cp.w * 0.5 + 0.5;
     if ( uvp.x < 0.0 || uvp.x > 1.0 || uvp.y < 0.0 || uvp.y > 1.0 ) break;
     float sz = linZ( texture2D( tDepth, uvp ).r );
+    // the first-person hands live in the very front of the depth range: never reflect them
+    if ( sz > -uNear * 1.12 ) continue;
     float dz = sz - p.z;
     if ( dz > 0.0 && dz < stp * 2.5 + 0.35 ) {
       vec3 a = prevP; vec3 b = p;

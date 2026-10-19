@@ -23,6 +23,11 @@ export const CSS = `
 .ibtn{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;transition:transform .12s;}
 .ibtn svg{width:28px;height:28px;}
 .ibtn:hover{transform:translateY(-2px);background:#fffaf0;}
+.ibtn.on{background:#e6f1d6;border-color:rgba(77,122,58,.7);}
+.xhair{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:rgba(255,253,246,.92);box-shadow:0 0 0 1.5px rgba(62,47,37,.5),0 0 6px rgba(0,0,0,.25);pointer-events:none;opacity:0;transition:opacity .2s;}
+.xhair.show{opacity:1;}
+.lockhint{position:absolute;left:50%;top:calc(50% + 30px);transform:translateX(-50%);padding:7px 14px;font-size:14px;font-weight:600;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;}
+.lockhint.show{opacity:.95;}
 .ibtn .k{position:absolute;bottom:-4px;right:-4px;font-size:10px;background:var(--brown2);color:#fff;border-radius:6px;padding:1px 4px;font-weight:700;}
 .minimap{width:172px;height:172px;border-radius:20px;overflow:hidden;position:relative;padding:0;}
 .minimap canvas{width:100%;height:100%;display:block;border-radius:18px;}

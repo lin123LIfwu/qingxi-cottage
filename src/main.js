@@ -11,6 +11,7 @@ import { Structures } from './world/structures.js';
 import { Pipeline } from './render/pipeline.js';
 import { Player } from './game/player.js';
 import { CameraRig } from './game/camera.js';
+import { ViewModel } from './game/viewmodel.js';
 import { Farm, CROPS, CROP_KEYS } from './game/farm.js';
 import { Fishing } from './game/fishing.js';
 import { FISH } from './game/fishData.js';
@@ -29,6 +30,8 @@ const QUALITY = {
   high: { pr: 1.5, shadow: 'high', msaa: 4, name: '精美' },
 };
 const WEATHER_NAME = { sunny: '☀️ 晴朗', cloudy: '⛅ 多云', rain: '🌧️ 小雨' };
+const REACH = 2.6;   // first person: how far (horizontally) the hands can work the soil
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _dir = new THREE.Vector3(), _sz = new THREE.Vector2();
 
 class Game {
   async boot() {
@@ -61,9 +64,11 @@ class Game {
       uSkyAmbient: { value: new THREE.Color(0.3, 0.35, 0.4) }, uNight: { value: 0 }, uRain: { value: 0 }, uWet: { value: 0 },
       uWind: { value: new THREE.Vector2(0.55, 0.3) }, uPlayerPos: { value: new THREE.Vector3() },
       uFocus: { value: new THREE.Vector3(0, -999, 0) }, uOccR: { value: 2.2 }, uOccK: { value: 0.82 },
+      uNearF: { value: new THREE.Vector2(1.4, 2.8) },
     };
     const scene = this.scene = new THREE.Scene();
     const camera = this.camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.15, 1400);
+    scene.add(camera);   // the first-person hands are parented to the camera
 
     loading.set('正在生成写实材质……', 0.04); await nextFrame();
     bakeTextures(renderer, { groundSize: this.qualityKey() === 'low' ? 512 : 1024 });
@@ -98,6 +103,13 @@ class Game {
     if (P && isFinite(P.x)) player.place(P.x, P.z, P.yaw); else player.place(SPAWN.x, SPAWN.z, 0);
     this.rig = new CameraRig(camera, renderer.domElement, T);
     this.rig.blockers = [[-4.2, 0, -16.6, 4.2, 9.5, -8.4], [SHOP.x - 1.5, 0, SHOP.z - 0.8, SHOP.x + 1.5, 4.2, SHOP.z + 0.9]];
+    this.rig.sens = S.settings.sens || 1;
+    this.rig.onFov = (fov) => this.fx && this.fx.setViewport(this.renderer.getDrawingBufferSize(_sz).y, fov);
+    this.rig.onViewRequest = (v, wheel) => { if (this.mode === 'play' && !this.ui.modal) this.setView(v, wheel); };
+    this.rig.setFP(S.settings.view === 'first');
+    this.vm = new ViewModel(camera, U);
+    player.vm = this.vm;
+    this.fpVis = false; this.frameNo = 0;
     this.fx = new FX(scene, U, T);
     this.fx.setButterflySpots((veg.flowerSpots || []).filter(s => Math.hypot((s.x ?? s[0]) - 2, (s.z ?? s[1]) + 6) < 45).slice(0, 8));
     this.audio = new AudioSys();
@@ -127,14 +139,20 @@ class Game {
     farm.onRipe = () => {};
     player.onStep = (surface, run) => this.onStep(surface, run);
     player.onJump = () => this.audio.play('jump', { vol: 0.6 });
-    player.onLand = () => { this.audio.play('land', { vol: 0.6 }); this.fx.dust(player.pos, 1.2); };
+    player.onLand = () => { this.audio.play('land', { vol: 0.6 }); this.fx.dust(player.pos, 1.2); this.landed = true; };
     this.setTool(S.tool || 0, true);
     this.ui.renderHotbar(); this.ui.updateHUD(this.env);
     // warm up: compile + first render
     loading.set('马上就好……', 0.95); await nextFrame();
     this.env.update(0.016, (S.minutes / 60) % 24, S.weather, player.pos, 0);
     this.titleCamera(0);
-    try { renderer.compile(scene, camera); } catch (e) { /* ignore */ }
+    {
+      const vm = this.vm; vm.root.visible = true;
+      for (const k in vm.T) vm.T[k].g.visible = true;
+      try { renderer.compile(scene, camera); } catch (e) { /* ignore */ }
+      for (const k in vm.T) vm.T[k].g.visible = vm.shown === k;
+      vm.root.visible = false;
+    }
     this.pipeline.render(this.env.exposure, 0);
     loading.done();
     const auto = sessionStorage.getItem('qingxi-autostart');
@@ -159,6 +177,7 @@ class Game {
     this.pipeline.setSize(v.x, v.y);
     this.bindTargets();
     this.fx.setViewport(v.y, this.camera.fov);
+    this.vm && this.vm.resize(innerWidth, innerHeight);
   }
   qualityKey() { const q = this.S.settings.quality; return q === 'auto' ? (this.autoQ || 'medium') : q; }
   qualityName() { const q = this.S.settings.quality; return q === 'auto' ? `自动（${QUALITY[this.qualityKey()].name}）` : QUALITY[q].name; }
@@ -215,6 +234,9 @@ class Game {
   onKey(k, e) {
     const ui = this.ui;
     if (k === 'Escape') {
+      // Esc first just releases the mouse in first person (the browser does that itself, too)
+      if (this.rig.locked) { this.rig.exitLock(); return; }
+      if (performance.now() - this.rig.lockReleasedAt < 500) return;
       if (ui.modal) { this.sfx('close'); ui.close(); return; }
       if (this.mode === 'play' && this.fishing.active && this.fishing.state !== 'caught') { this.fishing.cancel(); return; }
       if (this.mode === 'play') { this.sfx('open'); ui.open('settings'); }
@@ -231,6 +253,7 @@ class Game {
     if (k === 'l') { this.sfx('open'); ui.open('log'); return; }
     if (k === 'h') { this.sfx('open'); ui.open('help'); return; }
     if (k === 'm') { ui.mapWrap.style.display = ui.mapWrap.style.display === 'none' ? '' : 'none'; return; }
+    if (k === 'v') { this.toggleView(true); return; }
     if (k === 'e') { this.interact(); return; }
     if (k === 'f') {
       if (this.fishing.active) { this.fishing.press(); return; }
@@ -255,6 +278,7 @@ class Game {
     this.S.tool = clamp(i, 0, SLOTS.length - 1);
     const s = this.slot();
     this.player.setTool(s.type === 'seed' ? 'seeds' : s.id);
+    if (s.type === 'seed' && this.vm) this.vm.setSeed(s.id, CROPS[s.id].icon);
     if (!silent) {
       this.sfx('select', 0.6);
       let name = s.name;
@@ -265,12 +289,36 @@ class Game {
     this.ui && this.ui.renderHotbar();
   }
   targetTile() {
+    if (this.fpAimOn()) { const a = this.fpAim(); return { i: Math.floor(a.x), j: Math.floor(a.z) }; }
     const p = this.player, f = p.forward(new THREE.Vector3());
     return { i: Math.floor(p.pos.x + f.x * 0.95), j: Math.floor(p.pos.z + f.z * 0.95) };
+  }
+  // ---- first person aiming: where the crosshair meets the ground / water (cached per frame)
+  fpAimOn() { return this.mode === 'play' && this.rig.fp && this.rig.fpK > 0.5; }
+  fpAim() {
+    const a = this._aim || (this._aim = { x: 0, y: 0, z: 0, hit: false, water: false, hd: 0, f: -1 });
+    if (a.f === this.frameNo) return a;
+    a.f = this.frameNo;
+    const cam = this.camera, o = cam.position, T = this.T, p = this.player.pos;
+    const d = _dir.set(0, 0, -1).applyQuaternion(cam.quaternion);
+    a.hit = false; a.water = false;
+    for (let s = 0.3; s <= 7; s += s < 3 ? 0.05 : 0.12) {
+      const x = o.x + d.x * s, y = o.y + d.y * s, z = o.z + d.z * s;
+      const g = T.heightAt(x, z), lv = T.waterLevelAt(x, z), w = lv > -40 && lv > g + 0.01;
+      if (y <= (w ? lv : g)) { a.hit = true; a.water = w; a.x = x; a.y = w ? lv : g; a.z = z; break; }
+    }
+    a.hd = a.hit ? Math.hypot(a.x - p.x, a.z - p.z) : 1e9;
+    if (!a.hit || a.hd > REACH) {
+      // out of reach: the work spot stops at arm's length along the view direction
+      const l = Math.hypot(d.x, d.z) || 1;
+      a.x = p.x + d.x / l * REACH; a.z = p.z + d.z / l * REACH; a.y = T.heightAt(a.x, a.z);
+    }
+    return a;
   }
   waterSourceAhead() {
     const p = this.player, f = p.forward(new THREE.Vector3()), T = this.T;
     if (p.waterDepth > 0.08) return 'water';
+    if (this.fpAimOn()) { const a = this.fpAim(); if (a.hit && a.water && a.hd < 4.2) return 'water'; }
     for (const d of [0.5, 1.0, 1.5, 2.0]) {
       const w = T.waterAt(p.pos.x + f.x * d, p.pos.z + f.z * d);
       if (w && w.depth > 0.06) return 'water';
@@ -343,6 +391,7 @@ class Game {
       if (S.water <= 0) { this.toastOnce('empty', '水壶空了，去池塘、小河或水桶装水吧'); this.sfx('error', 0.5); return; }
       if (!tile) { this.toastOnce('nowater', '这里没有需要浇水的田', ''); return; }
       if (tile.wet) { this.toastOnce('wet', '这块地已经浇过水了', ''); return; }
+      this.pourAt = { x: i + 0.5, z: j + 0.5 };
       p.startAction('water', 0.95, 0.35, () => {
         this.farm.water(i, j); S.water = Math.max(0, S.water - 1); this.ui.renderHotbar();
         if (!S.flags) S.flags = {};
@@ -428,13 +477,35 @@ class Game {
     const s = this.S.settings; s[k] = v;
     if (k === 'music' || k === 'sfx') this.audio.setVolumes({ music: s.music, sfx: s.sfx });
     if (k === 'quality') { this.autoChecked = false; this.applyQuality(false); }
+    if (k === 'sens') this.rig.sens = v;
+    if (k === 'view') this.setView(v);
     this.ui.updateHUD(this.env);
     this.save();
   }
   cycleSpeed() { const s = this.S.settings; s.speed = s.speed === 1 ? 2 : s.speed === 2 ? 4 : 1; this.ui.updateHUD(this.env); }
   onModal(open) {
     this.rig.enabled = !open;
-    if (open) { this.keys = {}; this.mouseDown = false; this.fishing.holding = false; }
+    if (open) { this.keys = {}; this.mouseDown = false; this.fishing.holding = false; this.rig.exitLock(); }
+  }
+  // ------------------------------------------------------------------ first / third person
+  setView(v, fromWheel) {
+    const fp = v === 'first', S = this.S;
+    S.settings.view = fp ? 'first' : 'third';
+    if (this.rig.fp !== fp) {
+      this.rig.setFP(fp, fromWheel);
+      if (this.mode === 'play') this.sfx('select', 0.5);
+      if (fp && this.mode === 'play') {
+        if (!S.flags) S.flags = {};
+        if (!S.flags.fpTip) { S.flags.fpTip = 1; this.ui.toast('第一人称：点击画面锁定鼠标，移动鼠标环顾；Esc 释放鼠标，按 V 或滚轮切回', '', '👁️'); }
+      }
+    }
+    this.ui.renderViewState && this.ui.renderViewState();
+    this.save();
+  }
+  toggleView(fromKey) {
+    this.setView(this.rig.fp ? 'third' : 'first');
+    // a key press counts as a user gesture, so the mouse can be captured right away
+    if (fromKey && this.rig.fp && this.mode === 'play' && !this.ui.modal && this.rig.canLock()) this.rig.requestLock();
   }
   // ------------------------------------------------------------------ fishing events
   onFishEvent(type, d) {
@@ -477,7 +548,7 @@ class Game {
     this.farm.newDay(S.weather === 'rain');
     this.U.uWet.value = S.weather === 'rain' ? 1 : this.U.uWet.value * 0.4;
     this.player.place(SPAWN.x, SPAWN.z, 0);
-    this.rig.yaw = 0.35; this.rig.pitch = 0.38; this.rig.inited = false;
+    this.rig.yaw = 0.35; this.rig.pitch = 0.38; this.rig.fpPitch = 0.12; this.rig.inited = false;
     this.env.snapWeather(S.weather);
     const ripe = [...this.farm.tiles.values()].filter(t => this.farm.ripe(t)).length;
     this.save();
@@ -522,7 +593,7 @@ class Game {
     location.reload();
   }
   resetSave() { this.newGame(); }
-  toTitle() { this.save(); this.mode = 'title'; this.saved = true; this.fishing.cancel(); this.ui.showTitle(true); }
+  toTitle() { this.save(); this.mode = 'title'; this.saved = true; this.fishing.cancel(); this.rig.exitLock(); this.rig.resetFov(); this.ui.showTitle(true); }
   save() {
     if (this.noSave) return;
     const S = this.S, p = this.player;
@@ -544,7 +615,7 @@ class Game {
   }
   frame(rdt) {
     const S = this.S, p = this.player, ui = this.ui;
-    this.realT += rdt;
+    this.realT += rdt; this.frameNo++;
     const t = this.realT;
     this.U.uTime.value = t;
     const paused = !!ui.modal && this.mode === 'play';
@@ -569,6 +640,8 @@ class Game {
     const input = {
       fwd: k.w || k.ArrowUp, back: k.s || k.ArrowDown, left: k.a || k.ArrowLeft, right: k.d || k.ArrowRight,
       run: k.Shift, jump: k[' '] && this.fishing.state === 'idle', locked,
+      // first person: the body turns with the view (but stays put while a line is out)
+      face: this.mode === 'play' && this.rig.fp && !this.fishing.active ? this.rig.yaw + Math.PI : null,
     };
     p.update(this.mode === 'play' && !paused ? rdt : (this.mode === 'title' ? rdt : 0), input, this.rig.yaw, t);
     // wading ripples
@@ -576,23 +649,52 @@ class Game {
       this.wadeT -= rdt;
       if (this.wadeT < 0) { this.wadeT = p.speed > 0.5 ? 0.35 : 1.4; this.water.addRipple(p.pos.x, p.pos.z, p.speed > 0.5 ? 0.4 : 0.15); }
     }
+    // ---- camera ----
+    const U = this.U;
+    if (this.mode === 'title') { this.titleCamera(t); U.uFocus.value.set(4, HOME_H + 1.5, -9); U.uOccR.value = 6.5; U.uOccK.value = 1.02; U.uNearF.value.set(1.4, 2.8); }
+    else {
+      const a = p.action, u = p.actionT;
+      const crouch = (a === 'plant' || a === 'harvest') ? smoothstep(0, 0.35, u) * (1 - smoothstep(0.7, 1, u))
+        : a === 'refill' ? 0.75 * smoothstep(0, 0.3, u) * (1 - smoothstep(0.7, 1, u)) : 0;
+      this.rig.update(rdt, p.pos, { rotL: k.q, rotR: k.r }, { speed: p.speed, run: !!k.Shift, walkPhase: p.walkPhase, grounded: p.grounded, crouch, landed: this.landed });
+      const fpk = this.rig.fpK > 0.5;
+      U.uFocus.value.copy(p.pos); U.uFocus.value.y += 1.0; U.uOccR.value = 2.3; U.uOccK.value = fpk ? 0 : 1.0;
+      U.uNearF.value.set(fpk ? 0.25 : 1.4, fpk ? 0.6 : 2.8);
+    }
+    this.landed = false;
+    // first-person hands replace the body once the camera is (nearly) at the eyes
+    const fpVis = this.mode === 'play' && this.rig.fpK > 0.85;
+    if (fpVis !== this.fpVis) {
+      this.fpVis = fpVis;
+      p.setFirstPerson(fpVis, this.vm);
+      this.vm.root.visible = fpVis;
+      if (fpVis) this.vm.drop();
+    }
+    if (fpVis) {
+      const F = this.fishing;
+      this.vm.update(rdt, t, {
+        tool: p.tool, action: p.action, u: p.actionT, speed: p.speed, run: !!k.Shift, walkPhase: p.walkPhase, grounded: p.grounded, vy: p.vy,
+        reelK: p.reelK || 0, rodBend: p.rodBend || 0, charge: F.state === 'charge' ? F.power : 0, yawVel: this.rig.yawVel, pitchVel: this.rig.pitchVel,
+      });
+    }
     // pour particles while watering
     if (p.action === 'water' && p.actionT > 0.28 && p.actionT < 0.85) {
-      const sp = p.spoutWorld(new THREE.Vector3());
-      const f = p.forward(new THREE.Vector3());
-      this.fx.pour(sp, new THREE.Vector3(f.x * 0.55, -0.35, f.z * 0.55), rdt);
+      const sp = p.spoutWorld(_v);
+      if (fpVis && this.pourAt) {
+        // aim the stream from the hand-held can at the tile being watered
+        const tx = this.pourAt.x, tz = this.pourAt.z, ty = this.T.heightAt(tx, tz), ft = 0.42;
+        _v2.set((tx - sp.x) / ft, (ty - sp.y + 4.9 * ft * ft) / ft, (tz - sp.z) / ft).multiplyScalar(1 / 1.85);
+        this.fx.pour(sp, _v2, rdt);
+      } else {
+        const f = p.forward(_v2);
+        this.fx.pour(sp, _v2.set(f.x * 0.55, -0.35, f.z * 0.55), rdt);
+      }
     }
     // ---- fishing ----
     this.fishing.holding = this.mouseDown || !!k[' '] || !!k.f;
-    if (!paused) this.fishing.update(this.mode === 'play' ? rdt : rdt, t);
+    if (!paused) this.fishing.update(rdt, t);
     // rain keeps soil wet
     if (S.weather === 'rain') { this.rainWetT -= rdt; if (this.rainWetT < 0) { this.rainWetT = 2; this.farm.setAllWet(); } }
-    // ---- camera ----
-    if (this.mode === 'title') { this.titleCamera(t); this.U.uFocus.value.set(4, HOME_H + 1.5, -9); this.U.uOccR.value = 6.5; this.U.uOccK.value = 1.02; }
-    else {
-      this.rig.update(rdt, p.pos, { rotL: k.q, rotR: k.r });
-      this.U.uFocus.value.copy(p.pos); this.U.uFocus.value.y += 1.0; this.U.uOccR.value = 2.3; this.U.uOccK.value = 1.0;
-    }
     // ---- world updates ----
     this.env.update(rdt, hour, S.weather, p.pos, t);
     const uw = this.U.uWet;
@@ -641,11 +743,21 @@ class Game {
   }
   updatePlayUI(paused) {
     const ui = this.ui, p = this.player, F = this.fishing, S = this.S;
-    // fishing widgets anchored at player's head
-    const head = p.pos.clone(); head.y += 2.1;
-    head.project(this.camera);
-    const anchor = { x: (head.x * 0.5 + 0.5) * innerWidth, y: (-head.y * 0.5 + 0.5) * innerHeight };
+    // fishing widgets anchored at the player's head (first person: beside the crosshair / above the float)
+    let anchor;
+    if (this.fpVis) {
+      anchor = { x: innerWidth * 0.5 + 40, y: innerHeight * 0.5 + 40 };
+      if (F.state === 'bite') {
+        const b = _v.copy(F.bobPos); b.y += 0.45; b.project(this.camera);
+        if (b.z < 1 && Math.abs(b.x) < 0.92 && Math.abs(b.y) < 0.92) anchor = { x: (b.x * 0.5 + 0.5) * innerWidth, y: (-b.y * 0.5 + 0.5) * innerHeight };
+      }
+    } else {
+      const head = _v.copy(p.pos); head.y += 2.1;
+      head.project(this.camera);
+      anchor = { x: (head.x * 0.5 + 0.5) * innerWidth, y: (-head.y * 0.5 + 0.5) * innerHeight };
+    }
     ui.updateFishing(F, anchor);
+    ui.setFPState(this.fpVis && !paused && !this.seq, this.rig.locked, this.rig.dragLook);
     // target highlight & prompt
     let prompt = null, hl = false, ok = true;
     const s = this.slot();
