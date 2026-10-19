@@ -1,0 +1,6 @@
+source/out/
+source/src_tex/
+game_export/node_modules/
+game_export/out/
+game_export/icons/
+*.blend1

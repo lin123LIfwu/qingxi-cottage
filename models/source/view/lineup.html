@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"><style>html,body{margin:0;background:#000}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script></head>
+<body><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const q = new URLSearchParams(location.search);
+const W = +(q.get('w') || 1280), H = +(q.get('h') || 720);
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(W, H); r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap;
+r.toneMapping = THREE.AgXToneMapping; document.body.appendChild(r.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xc9d6e0);
+scene.environment = new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.55;
+const sun = new THREE.DirectionalLight(0xfff1e0, 2.8); sun.position.set(1.0, 1.6, 1.1); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -1.2, right: 1.2, top: 1.2, bottom: -1.2, near: 0.1, far: 5 }); sun.shadow.bias = -0.0004; scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xdfe9f2, 0x8a7a62, 0.35));
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshStandardMaterial({ color: 0xd8ccb4, roughness: 0.88 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const L = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder), stats = [];
+const DIR = q.get("dir") || "../out/";   // 默认读 source/out/ 里刚导出的 GLB
+const place = {
+  'hoe.glb':    o => { o.position.set(-0.62, 0.128, -0.12); o.rotation.set(0, 0.9, 0); },
+  'can.glb':    o => { o.position.set(-0.18, 0.3175, -0.18); o.rotation.set(0, -1.15, 0); },
+  'packet.glb': o => { o.position.set(0.26, 0.0302, -0.05); o.rotation.set(-0.12, -0.35, 0); },
+  'rod.glb':    o => { o.position.set(0.62, 0.088, 0.30); o.quaternion.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, Math.PI / 2, 'XYZ')); },
+};
+for (const f of ['hoe.glb', 'can.glb', 'rod.glb', 'packet.glb']) {
+  const t0 = performance.now();
+  const g = await L.loadAsync(DIR + f);
+  const nodes = []; let tris = 0;
+  g.scene.traverse(o => {
+    if (o !== g.scene) nodes.push(o.name + (o.isMesh ? '' : '(node)'));
+    if (o.isMesh) { o.castShadow = o.receiveShadow = true; tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
+      const m = o.material; stats.push({ file: f, mesh: o.name, tris: o.geometry.index.count / 3, mat: m.name, maps: ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap'].filter(k => m[k]).map(k => k + ':' + m[k].image.width + 'x' + m[k].image.height).join(' '), transparent: m.transparent }); }
+  });
+  place[f](g.scene);
+  if (f === 'rod.glb') {   // pose check: bend the blank at its segment pivots and turn the crank
+    const s1 = g.scene.getObjectByName('Seg1'), s2 = g.scene.getObjectByName('Seg2'), s3 = g.scene.getObjectByName('Seg3');
+    s1.rotation.x = 0.03; s2.rotation.x = 0.06; s3.rotation.x = 0.1;
+    g.scene.getObjectByName('Crank').rotation.x = 1.2;
+  }
+  scene.add(g.scene); g.scene.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(g.scene), s = b.getSize(new THREE.Vector3());
+  const marks = {};
+  for (const n of ['Spout', 'Tip', 'Knob']) { const o = g.scene.getObjectByName(n); if (o) { const p = new THREE.Vector3(); o.getWorldPosition(p); marks[n] = p.toArray().map(v => +v.toFixed(3));
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.006, 12, 8), new THREE.MeshBasicMaterial({ color: 0xff2a6a })); dot.position.copy(p); scene.add(dot); } }
+  stats.push({ file: f, totalTris: tris, nodes: nodes.join(', '), sizeCm: [s.x, s.y, s.z].map(v => +(v * 100).toFixed(1)), loadMs: Math.round(performance.now() - t0), markers: marks });
+}
+const cam = new THREE.PerspectiveCamera(30, W / H, 0.01, 20);
+const view = q.get('view') || 'lineup';
+if (view === 'lineup') { cam.position.set(0.0, 1.22, 3.15); cam.lookAt(-0.08, 0.47, 0); }
+else if (view === 'reel') { cam.position.set(0.48, 0.24, 0.72); cam.lookAt(0.6, 0.05, 0.3); cam.fov = 26; cam.updateProjectionMatrix(); }
+else if (view === 'can') { cam.position.set(0.25, 0.55, 0.75); cam.lookAt(-0.18, 0.2, -0.18); cam.fov = 30; cam.updateProjectionMatrix(); }
+r.render(scene, cam);
+window.__stats = stats; window.__done = true;
+</script></body></html>
