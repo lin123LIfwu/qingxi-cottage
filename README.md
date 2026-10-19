@@ -39,10 +39,14 @@ URL 参数：`?quality=low|medium|high` 指定画质，`?autostart=1` 跳过标�
 src/
   main.js              游戏主循环、输入、工具与交互、昼夜/睡眠、存档
   config.js            地图关键位置与常量
-  world/terrain.js     程序化地形（平原+山丘）、河流样条与瀑布、池塘、路径、地表纹理
+  world/terrain.js     程序化地形（平原+山丘）、河流样条与瀑布、池塘、路径、分层高度混合的写实地表材质
+  world/grass.js       GPU 写实草地：草叶在顶点着色器中生成（世界锚定网格、分块视锥剔除、远近两层渐变、风浪、角色拨开）
   world/water.js       水面：屏幕空间折射/反射(SSR)、吸收散射、流向贴图流动、细碎波光、岸边泡沫、涟漪
   world/environment.js 物理天空、太阳/月亮、阴影、雾、天气、环境光照
-  world/vegetation.js  树木/小树林/灌木/花草/芦苇/荷叶（实例化 + 风动画）
+  world/vegetation.js  树木/小树林/灌木/花草/芦苇/荷叶（实例化 + 风动画），烘焙草地密度图
+  gen/texgen.js        载入时用 GPU 程序化烘焙写实材质：草皮/泥土/田土/碎石/岩石/林地 + 四种树皮（含法线与 AO）
+  gen/leafgen.js       Canvas 程序化绘制树叶、针叶、花朵与果实图集
+  util/meadow.js       地面与草叶共用的草场变化（枯黄/茂盛/高矮）
   world/structures.js  小木屋、种子铺、出货箱、码头、木桥、栅栏、路灯等
   game/farm.js         田地、作物生长、浇水
   game/fishing.js      钓鱼流程与水中鱼群
@@ -53,3 +57,6 @@ src/
   audio/audio.js       WebAudio 程序化音效、环境声与五声音阶背景音乐
   ui/                  HUD、小地图、面板、图标与样式
 ```
+
+## 更新记录
+- **写实环境（进行中）**：草地改为 GPU 生成的写实草叶，地面改为程序化烘焙的写实分层材质（泥土小路、田土、河岸碎石、岩石、林下落叶）；水面与池塘保持原样。树木的写实化改造进行中。

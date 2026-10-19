@@ -4,6 +4,8 @@ import { makeSimplex2, fbm, mulberry32 } from '../util/noise.js';
 import { clamp, lerp, smoothstep, distToSegment2 } from '../util/math.js';
 import { GLSL_NOISE, GLSL_CAUSTIC } from '../util/glsl.js';
 import { glslColor } from '../util/color.js';
+import { GLSL_MEADOW } from '../util/meadow.js';
+import { TEX, GROUND_TILE } from '../gen/texgen.js';
 
 const gauss = (x, z, cx, cz, r) => Math.exp(-((x - cx) ** 2 + (z - cz) ** 2) / (2 * r * r));
 
@@ -431,7 +433,6 @@ export class Terrain {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setAttribute('aSplat', new THREE.BufferAttribute(spl, 4));
     g.setIndex(new THREE.BufferAttribute(index, 1));
     g.computeBoundingSphere();
@@ -488,83 +489,144 @@ export class Terrain {
 }
 
 function makeTerrainMaterial(U, T) {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0 });
+  // Layered, height-blended ground built from the procedurally baked texture array (texgen.js):
+  // turf / dirt path / tilled soil / gravel shore & river bed / triplanar rock / forest floor.
+  const it = GROUND_TILE.map(t => (1 / t).toFixed(5));
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.93, metalness: 0 });
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = U.uTime; sh.uniforms.uWet = U.uWet;
     sh.uniforms.tGround = { value: T.groundTex }; sh.uniforms.tWaterLv = { value: T.waterTex };
     sh.uniforms.uGroundRect = { value: T.groundRect }; sh.uniforms.uWaterRect = { value: T.waterRect };
+    sh.uniforms.tGC = { value: TEX.groundC }; sh.uniforms.tGN = { value: TEX.groundN };
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aSplat;\nvarying vec4 vSplat;\nvarying vec3 vWPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nattribute vec4 aSplat;\nvarying vec4 vSplat;\nvarying vec3 vWPos;\nvarying vec3 vNW;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvNW = normal;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 uniform float uTime; uniform float uWet;
 uniform sampler2D tGround; uniform sampler2D tWaterLv; uniform vec4 uGroundRect; uniform vec4 uWaterRect;
-varying vec4 vSplat; varying vec3 vWPos;
-float tUnder; float tWetK;
+uniform sampler2DArray tGC; uniform sampler2DArray tGN;
+varying vec4 vSplat; varying vec3 vWPos; varying vec3 vNW;
+float tUnder; float tWetK; vec3 gNW; float gRough; float gAO;
 ${GLSL_NOISE}
 ${GLSL_CAUSTIC}
-vec3 pebbleColor(vec2 p){
-  vec2 ip = floor(p); vec2 fp = fract(p);
-  float d1 = 8.0; float d2 = 8.0; vec2 id = vec2(0.0);
-  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-    vec2 g = vec2(float(x), float(y)); vec2 o = hash22(ip + g) * 0.85 + 0.075; vec2 r = g + o - fp; float d = dot(r, r);
-    if (d < d1) { d2 = d1; d1 = d; id = ip + g; } else if (d < d2) { d2 = d; }
-  }
-  float edge = sqrt(d2) - sqrt(d1);
-  float h = hash12(id * 1.37);
-  vec3 c = mix(${glslColor('#9e9384')}, ${glslColor('#c2b59c')}, h);
-  c = mix(c, ${glslColor('#6f6b66')}, step(0.78, hash12(id + 3.1)));
-  c = mix(c, ${glslColor('#a88a6a')}, step(0.86, hash12(id + 7.7)));
-  c = mix(c, ${glslColor('#7c8a72')}, step(0.9, hash12(id + 1.9)) * 0.7);
-  float gap = smoothstep(0.03, 0.16, edge);
-  return mix(${glslColor('#8c7f63')}, c * (0.85 + 0.3 * smoothstep(0.0, 0.5, edge)), gap);
-}`)
+${GLSL_MEADOW}
+// c: albedo (linear) + height in .a     n: world-space normal + AO in .a
+struct GS { vec4 c; vec4 n; };
+vec3 udn(vec3 tn, vec3 N){ return normalize(vec3(N.x + tn.x, N.y, N.z + tn.y)); }
+GS gTex(float L, vec2 uv, vec2 dx, vec2 dy, vec3 N){
+  GS s;
+  s.c = textureGrad(tGC, vec3(uv, L), dx, dy);
+  vec4 nn = textureGrad(tGN, vec3(uv, L), dx, dy);
+  s.n = vec4(udn(nn.xyz * 2.0 - 1.0, N), nn.a);
+  return s;
+}
+// two offset copies of the tile blended by a slow noise index: hides the repetition of large fields
+GS gTexNT(float L, vec2 uv, vec2 dx, vec2 dy, vec3 N){
+  float k = vnoise(uv * 0.45 + L * 7.0) * 8.0;
+  float i = floor(k); float f = fract(k);
+  vec2 oa = sin(vec2(3.0, 7.0) * i); vec2 ob = sin(vec2(3.0, 7.0) * (i + 1.0));
+  vec4 ca = textureGrad(tGC, vec3(uv + oa, L), dx, dy), cb = textureGrad(tGC, vec3(uv + ob, L), dx, dy);
+  vec4 na = textureGrad(tGN, vec3(uv + oa, L), dx, dy), nb = textureGrad(tGN, vec3(uv + ob, L), dx, dy);
+  float t = smoothstep(0.2, 0.8, f - 0.1 * dot(ca.rgb - cb.rgb, vec3(1.0)));
+  GS s; s.c = mix(ca, cb, t);
+  vec4 nn = mix(na, nb, t);
+  s.n = vec4(udn(nn.xyz * 2.0 - 1.0, N), nn.a);
+  return s;
+}
+// blend factor of layer b over a, using both height maps (sharp, natural transitions)
+float hbk(float ha, float hb, float w){ return clamp(((hb - ha) * 0.8 + (w * 2.0 - 1.0) * 1.6) / 0.22 + 0.5, 0.0, 1.0); }
+void gMix(inout GS a, GS b, float k){ a.c = mix(a.c, b.c, k); a.n = mix(a.n, b.n, k); }
+`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 {
   vec2 gp = vWPos.xz;
+  vec3 N = normalize(vNW);
+  vec2 dxW = dFdx(gp), dyW = dFdy(gp);
+  vec2 dxX = dFdx(vWPos.zy), dyX = dFdy(vWPos.zy);
+  vec2 dxZ = dFdx(vWPos.xy), dyZ = dFdy(vWPos.xy);
   float nA = fbm3(gp * 0.21);
   float nB = vnoise(gp * 1.7);
-  float nC = vnoise(gp * 6.3);
-  vec3 grassC = diffuseColor.rgb * (0.86 + 0.28 * nA) * (0.92 + 0.16 * nB);
   vec4 gm = texture2D(tGround, (gp - uGroundRect.xy) / uGroundRect.zw);
   float wl = texture2D(tWaterLv, (gp - uWaterRect.xy) / uWaterRect.zw).r;
   tUnder = wl - vWPos.y;
-  vec3 dirtC = ${glslColor('#9a7a58')} * (0.82 + 0.3 * nB) * (0.9 + 0.2 * nC);
-  vec3 sandC = ${glslColor('#cbbd98')} * (0.88 + 0.18 * nB) * (0.94 + 0.12 * nC);
-  vec3 rockC = ${glslColor('#8e8a82')} * (0.72 + 0.42 * nA) * (0.88 + 0.24 * nC);
-  vec3 forestC = ${glslColor('#5e5a32')} * (0.8 + 0.4 * nB);
-  vec3 col = grassC;
-  col = mix(col, forestC, vSplat.z * smoothstep(0.25, 0.75, nB * 0.7 + nA * 0.5));
-  float pathK = smoothstep(0.32, 0.72, gm.g + (nB - 0.5) * 0.3);
-  col = mix(col, dirtC, pathK);
-  float tillK = smoothstep(0.3, 0.7, gm.r);
-  col = mix(col, dirtC * 0.62, tillK);
-  float sandK = clamp(vSplat.x * 1.15 + (nB - 0.5) * 0.35, 0.0, 1.0);
-  col = mix(col, sandC, sandK);
-  if (tUnder > -0.25) {
-    vec3 peb = pebbleColor(gp * 2.6);
-    vec3 peb2 = pebbleColor(gp * 5.3 + 11.0);
-    peb = mix(peb, peb2, step(0.5, nB));
-    float pk = smoothstep(-0.25, 0.2, tUnder) * smoothstep(0.15, 0.6, nA + 0.25);
-    col = mix(col, peb, pk);
-    // sparse algae patches in deeper water
-    col = mix(col, ${glslColor('#5a6e3a')}, smoothstep(0.62, 0.8, nA) * smoothstep(0.6, 1.4, tUnder) * 0.6);
+  vec4 md = meadow(gp);
+
+  // --- turf (always)
+  GS cur = gTexNT(0.0, gp * ${it[0]}, dxW * ${it[0]}, dyW * ${it[0]}, N);
+  cur.c.rgb *= meadowTint(md) * vec3(1.0, 1.0, 0.92);
+  float rough = 0.95;
+  // --- forest floor (leaf litter, needles, moss) under the trees
+  float wF = vSplat.z * smoothstep(0.2, 0.7, nB * 0.6 + nA * 0.6);
+  if (wF > 0.002) {
+    GS s = gTexNT(5.0, gp * ${it[5]}, dxW * ${it[5]}, dyW * ${it[5]}, N);
+    float k = hbk(cur.c.a, s.c.a, wF); gMix(cur, s, k); rough = mix(rough, 0.92, k);
   }
-  col = mix(col, rockC, smoothstep(0.25, 0.75, vSplat.y + (nA - 0.5) * 0.3));
-  col *= mix(0.55, 1.0, vSplat.w);
+  // --- trodden dirt paths
+  float wP = smoothstep(0.3, 0.75, gm.g + (nB - 0.5) * 0.3);
+  if (wP > 0.002) {
+    GS s = gTexNT(1.0, gp * ${it[1]}, dxW * ${it[1]}, dyW * ${it[1]}, N);
+    float k = hbk(cur.c.a, s.c.a, wP); gMix(cur, s, k); rough = mix(rough, 0.9, k);
+  }
+  // --- tilled soil
+  float wT = smoothstep(0.3, 0.7, gm.r);
+  if (wT > 0.002) {
+    GS s = gTex(2.0, gp * ${it[2]}, dxW * ${it[2]}, dyW * ${it[2]}, N);
+    float k = hbk(cur.c.a, s.c.a, wT); gMix(cur, s, k); rough = mix(rough, 0.95, k);
+  }
+  // --- gravel: shores and the beds of the river and ponds
+  float sandK = clamp(vSplat.x * 1.2 + (nB - 0.5) * 0.35, 0.0, 1.0);
+  float bedK = smoothstep(-0.25, 0.2, tUnder) * smoothstep(0.1, 0.55, nA + 0.25);
+  float wG = max(sandK, bedK);
+  if (wG > 0.002) {
+    GS s = gTexNT(3.0, gp * ${it[3]}, dxW * ${it[3]}, dyW * ${it[3]}, N);
+    // drier, sandier tone on the banks, darker silt-washed stones underwater
+    s.c.rgb *= mix(vec3(1.08, 1.04, 0.96), vec3(0.92, 0.95, 0.9), smoothstep(-0.05, 0.4, tUnder));
+    float k = hbk(cur.c.a, s.c.a, wG); gMix(cur, s, k); rough = mix(rough, 0.78, k);
+  }
+  // sparse algae on the deeper bed
+  cur.c.rgb = mix(cur.c.rgb, ${glslColor('#4f6334')}, smoothstep(0.62, 0.8, nA) * smoothstep(0.6, 1.4, tUnder) * 0.55);
+  // --- rock on steep slopes / high ground / the cascade (triplanar)
+  float wR = smoothstep(0.2, 0.8, vSplat.y + (nA - 0.5) * 0.3);
+  if (wR > 0.002) {
+    vec3 bw = pow(abs(N), vec3(4.0)); bw /= dot(bw, vec3(1.0));
+    vec3 p = vWPos * ${it[4]};
+    vec4 cY = textureGrad(tGC, vec3(p.xz, 4.0), dxW * ${it[4]}, dyW * ${it[4]});
+    vec4 nY = textureGrad(tGN, vec3(p.xz, 4.0), dxW * ${it[4]}, dyW * ${it[4]});
+    vec4 cX = textureGrad(tGC, vec3(p.zy, 4.0), dxX * ${it[4]}, dyX * ${it[4]});
+    vec4 nX = textureGrad(tGN, vec3(p.zy, 4.0), dxX * ${it[4]}, dyX * ${it[4]});
+    vec4 cZ = textureGrad(tGC, vec3(p.xy, 4.0), dxZ * ${it[4]}, dyZ * ${it[4]});
+    vec4 nZ = textureGrad(tGN, vec3(p.xy, 4.0), dxZ * ${it[4]}, dyZ * ${it[4]});
+    vec3 tX = nX.xyz * 2.0 - 1.0, tY = nY.xyz * 2.0 - 1.0, tZ = nZ.xyz * 2.0 - 1.0;
+    tX = vec3(tX.xy + N.zy, abs(tX.z) * N.x);
+    tY = vec3(tY.xy + N.xz, abs(tY.z) * N.y);
+    tZ = vec3(tZ.xy + N.xy, abs(tZ.z) * N.z);
+    GS s;
+    s.c = cX * bw.x + cY * bw.y + cZ * bw.z;
+    s.n = vec4(normalize(tX.zyx * bw.x + tY.xzy * bw.y + tZ.xyz * bw.z), nX.a * bw.x + nY.a * bw.y + nZ.a * bw.z);
+    float k = hbk(cur.c.a, s.c.a, wR); gMix(cur, s, k); rough = mix(rough, 0.8, k);
+  }
+  vec3 col = cur.c.rgb;
+  gNW = normalize(cur.n.xyz);
+  gAO = cur.n.a;
+  col *= mix(0.62, 1.0, vSplat.w) * mix(0.75, 1.0, gAO);
   float wetK = clamp(1.0 - (vWPos.y - wl) / 0.45, 0.0, 1.0);
   wetK = max(wetK, uWet * 0.75);
-  col *= mix(1.0, 0.6, wetK * (1.0 - smoothstep(0.1, 0.6, tUnder) * 0.4));
+  col *= mix(1.0, 0.62, wetK * (1.0 - smoothstep(0.1, 0.6, tUnder) * 0.4));
   // glossy sheen only in a thin band right at the waterline (or everywhere while it rains)
   tWetK = max(clamp(1.0 - (vWPos.y - wl) / 0.16, 0.0, 1.0), uWet * 0.75);
+  gRough = rough;
   diffuseColor.rgb = col;
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor = gRough;
 // wet sheen only on the shore band / rain-soaked ground, never on the submerged bed
-roughnessFactor = mix(roughnessFactor, 0.4, tWetK * (1.0 - smoothstep(-0.02, 0.06, tUnder)));`)
+roughnessFactor = mix(roughnessFactor, 0.35, tWetK * (1.0 - smoothstep(-0.02, 0.06, tUnder)));`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+normal = normalize((viewMatrix * vec4(gNW, 0.0)).xyz);`)
       .replace('#include <aomap_fragment>', `#include <aomap_fragment>
 {
+  reflectedLight.indirectDiffuse *= gAO;
   // the water surface handles reflections; the submerged bed is purely diffuse
   float uwK = smoothstep(0.0, 0.1, tUnder);
   reflectedLight.indirectSpecular *= 1.0 - uwK;

@@ -1,6 +1,8 @@
 // 青溪小筑 — cozy three.js farming & fishing game
 import * as THREE from 'three';
 import { Terrain } from './world/terrain.js';
+import { bakeTextures } from './gen/texgen.js';
+import { buildLeafAtlas } from './gen/leafgen.js';
 import { Colliders } from './world/colliders.js';
 import { Vegetation } from './world/vegetation.js';
 import { Environment } from './world/environment.js';
@@ -63,6 +65,9 @@ class Game {
     const scene = this.scene = new THREE.Scene();
     const camera = this.camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.15, 1400);
 
+    loading.set('正在生成写实材质……', 0.04); await nextFrame();
+    bakeTextures(renderer, { groundSize: this.qualityKey() === 'low' ? 512 : 1024 });
+    buildLeafAtlas(renderer);
     loading.set('正在堆起山丘、挖出小河……', 0.08); await nextFrame();
     const T = this.T = new Terrain();
     const col = this.col = new Colliders();
@@ -593,7 +598,7 @@ class Game {
     const uw = this.U.uWet;
     uw.value = Math.max(this.env.wx.rain, uw.value - rdt * (S.weather === 'rain' ? 0 : 0.0035 * S.settings.speed));
     this.structures.update(rdt, t, this.env.nightK);
-    this.veg.update(this.camera.position);
+    this.veg.update(this.camera);
     const hand = p.root.position.clone(); hand.y += 1.2;
     this.farm.update(rdt, hand);
     this.ripeT -= rdt;

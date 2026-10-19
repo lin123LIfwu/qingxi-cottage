@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GeoBuilder, blobGeo } from '../util/geo.js';
 import { patchVeg } from './wind.js';
+import { GrassField } from './grass.js';
 import { mulberry32 } from '../util/noise.js';
 import { clamp, lerp, smoothstep, distToSegment2 } from '../util/math.js';
 import { POND } from '../config.js';
@@ -618,8 +619,42 @@ export class Vegetation {
       m.castShadow = m.receiveShadow = true; this.group.add(m);
     }
     this.buildWaterPlants();
-    this.buildGrass(structures, isTilled);
+    this.bakeGrassMask(structures);
+    this.grass = new GrassField(this.T, this.U, this.qk || 'medium');
+    this.group.add(this.grass.group);
     this.buildFlowers(structures, isTilled);
+  }
+  // grass density (0..1) baked into the blue channel of the ground mask; read by the GPU grass
+  grassDensity(x, z, structures) {
+    const T = this.T;
+    const rr = r6(x, z); if (rr > 88) return 0;
+    let d = smoothstep(88, 82, rr);
+    const h = T.heightAt(x, z), lv = T.waterLevelAt(x, z);
+    if (lv > -40) {
+      d *= smoothstep(lv + 0.04, lv + 0.22, h) * (1 - 0.85 * smoothstep(lv + 0.5, lv + 0.12, h));
+      if (d <= 0) return 0;
+    }
+    d *= smoothstep(21, 17, h);
+    d *= 1 - smoothstep(0.12, 0.42, T.pathAt(x, z));
+    if (d <= 0) return 0;
+    const n = T.normalAt(x, z, _p); d *= smoothstep(0.76, 0.87, n.y);
+    if (d <= 0) return 0;
+    if (T.onDeck(x, z)) return 0;
+    if (structures && structures.noGrass(x, z)) return 0;
+    if (this.col.hit(x, z, 0.05)) return 0;
+    const fk = T.sampleGrid(T.forest, x, z);
+    d *= 1 - fk * 0.55;
+    const pn = T.noise(x * 0.08 + 5, z * 0.08 - 3);
+    d *= 0.62 + 0.38 * smoothstep(-0.8, -0.35, pn);
+    return d;
+  }
+  bakeGrassMask(structures) {
+    const T = this.T, { S, R, data } = T.gm, texel = (2 * R) / S;
+    for (let tz = 0; tz < S; tz++) for (let tx = 0; tx < S; tx++) {
+      const x = -R + (tx + 0.5) * texel, z = -R + (tz + 0.5) * texel;
+      data[(tz * S + tx) * 4 + 2] = Math.round(clamp(this.grassDensity(x, z, structures), 0, 1) * 255);
+    }
+    T.groundTex.needsUpdate = true;
   }
   inst(geo, mat, list, shadow, normalAlign = false) {
     const m = new THREE.InstancedMesh(geo, mat, list.length);
@@ -817,23 +852,14 @@ export class Vegetation {
       }
       if (changed) m.instanceMatrix.needsUpdate = true;
     };
-    for (const m of this.grassChunks) {
-      const u = m.userData;
-      if (Math.abs(u.cx - (x0 + x1) / 2) > 9 || Math.abs(u.cz - (z0 + z1) / 2) > 9) continue;
-      kill(m, u.pos, u.n);
-    }
     if (this.flowers) kill(this.flowers, this.flowers.userData.pos, this.flowers.count);
   }
-  setQuality(q) { this.quality = q === 'high' ? 1 : q === 'low' ? 0.38 : 0.7; }
-  update(camPos) {
-    for (const m of this.grassChunks) {
-      const u = m.userData;
-      const d = Math.hypot(u.cx - camPos.x, u.cz - camPos.z);
-      if (d > 72) { m.visible = false; continue; }
-      m.visible = true;
-      const f = this.quality * lerp(1, 0.4, smoothstep(26, 60, d));
-      m.count = Math.max(1, Math.floor(u.n * f));
-    }
+  setQuality(q) {
+    this.qk = q; this.quality = q === 'high' ? 1 : q === 'low' ? 0.38 : 0.7;
+    if (this.grass) this.grass.setQuality(q);
+  }
+  update(camera) {
+    if (this.grass) { camera.updateMatrixWorld(); this.grass.update(camera); }
   }
 }
 
