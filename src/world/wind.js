@@ -67,6 +67,17 @@ gl_Position = projectionMatrix * mvPosition;`)
 #if defined( USE_ENVMAP ) || defined( DISTANCE ) || defined ( USE_SHADOWMAP ) || defined ( USE_TRANSMISSION ) || NUM_SPOT_LIGHT_COORDS > 0
 vec4 worldPosition = vec4(vWP, 1.0);
 #endif`);
+    if (o.alphaSharp) sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>', `
+#ifdef USE_MAP
+{
+  // keep alpha-tested foliage from thinning out in the smaller mip levels
+  vec2 tsz = vec2(textureSize(map, 0));
+  vec2 ddx = dFdx(vMapUv * tsz), ddy = dFdy(vMapUv * tsz);
+  float mipL = max(0.0, 0.5 * log2(max(dot(ddx, ddx), dot(ddy, ddy))));
+  diffuseColor.a *= 1.0 + mipL * 0.28;
+}
+#endif
+#include <alphatest_fragment>`);
     if (sh.fragmentShader.includes('#include <color_fragment>')) {
       if (o.noflip) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', NOFLIP);
       sh.fragmentShader = sh.fragmentShader
@@ -90,7 +101,7 @@ ${o.occlude ? `{
 {
   vec3 vd = normalize(vWP - cameraPosition);
   float bl = pow(max(dot(vd, uSunDir), 0.0), 5.0);
-  outgoingLight += uSunColor * diffuseColor.rgb * bl * vH * ${(o.trans ?? 0.35).toFixed(3)};
+  outgoingLight += uSunColor * diffuseColor.rgb * (bl * vH * ${(o.trans ?? 0.35).toFixed(3)} + ${(o.sss ?? 0).toFixed(3)});
 }
 #include <opaque_fragment>`);
     }

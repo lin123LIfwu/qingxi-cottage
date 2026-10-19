@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { GeoBuilder, blobGeo } from '../util/geo.js';
 import { patchVeg } from './wind.js';
 import { GrassField } from './grass.js';
+import { TreeField } from './trees.js';
+import { genLog, genStump, ringTexture } from '../gen/treegen.js';
+import { TEX } from '../gen/texgen.js';
 import { mulberry32 } from '../util/noise.js';
 import { clamp, lerp, smoothstep, distToSegment2 } from '../util/math.js';
 import { POND } from '../config.js';
@@ -12,133 +15,6 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vect
 const UPV = new THREE.Vector3(0, 1, 0);
 
 // ---------------------------------------------------------------- prototypes
-function broadleafGeo(noise, seed, o) {
-  const rnd = mulberry32(seed);
-  const B = new GeoBuilder(['aWind']);
-  const th = o.th, tr = o.tr, R = o.R;
-  B.add(new THREE.CylinderGeometry(tr * 0.55, tr, th + 0.6, 8, 5), {
-    pos: [0, (th + 0.6) / 2 - 0.25, 0], color: o.bark,
-    warp: (x, y, z) => {
-      const t = clamp(y / th, 0, 1), fl = 1 + 0.55 * smoothstep(0.4, -0.2, y);
-      return [x * fl + Math.sin(t * 2.2 + seed) * 0.12 * t * o.bend, y, z * fl + Math.cos(t * 1.7 + seed) * 0.1 * t * o.bend];
-    },
-    colorFn: o.birch
-      ? (c, x, y, z) => { const n = noise(Math.atan2(z, x) * 1.3 + seed, y * 5.5); if (n > 0.42 && y > 0.3) c.set('#3d3732'); else c.multiplyScalar(0.92 + 0.12 * noise(x * 9, y * 9)); if (y < 0.35) c.multiplyScalar(0.7); }
-      : (c, x, y, z) => c.multiplyScalar(0.72 + 0.42 * (noise(Math.atan2(z, x) * 2.5, y * 4 + seed) * 0.5 + 0.5)),
-    aWind: (x, y) => clamp(y / th, 0, 1) * 0.3,
-  });
-  const nb = o.branches ?? 2;
-  for (let i = 0; i < nb; i++) {
-    const a = rnd() * Math.PI * 2, tilt = 0.75 + rnd() * 0.3, L = R * 0.85;
-    const by = th * (0.62 + rnd() * 0.22);
-    const d = [Math.cos(a) * Math.sin(tilt), Math.cos(tilt), Math.sin(a) * Math.sin(tilt)];
-    B.add(new THREE.CylinderGeometry(tr * 0.16, tr * 0.34, L, 5), { pos: [d[0] * L / 2, by + d[1] * L / 2, d[2] * L / 2], rot: [0, Math.PI - a, tilt], color: o.bark, colorFn: (c) => c.multiplyScalar(o.birch ? 0.8 : 0.85), aWind: 0.4 });
-  }
-  const cy = th + R * 0.62;
-  const blobs = [];
-  if (o.column) {
-    blobs.push([0, -R * 0.55, 0, 0.82], [0, R * 0.25, 0, 0.9], [0, R * 1.0, 0, 0.66]);
-    for (let i = 0; i < 3; i++) { const a = i * 2.1 + rnd(); blobs.push([Math.cos(a) * R * 0.5, (rnd() - 0.4) * R * 0.9, Math.sin(a) * R * 0.5, 0.62 + rnd() * 0.15]); }
-  } else {
-    blobs.push([0, 0, 0, 1]);
-    const n = o.blobs ?? 5;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + rnd() * 0.6;
-      blobs.push([Math.cos(a) * R * 0.62, (rnd() - 0.4) * R * 0.45, Math.sin(a) * R * 0.62, 0.55 + rnd() * 0.22]);
-    }
-    blobs.push([(rnd() - 0.5) * R * 0.3, R * 0.58, (rnd() - 0.5) * R * 0.3, 0.6]);
-  }
-  const dark = C(o.leaf[0]), light = C(o.leaf[1]);
-  const sy = o.column ? 0.7 : 1.15;
-  for (const [bx, by, bz, bs] of blobs) {
-    const r = R * bs, jit = 0.9 + rnd() * 0.18;
-    B.add(blobGeo(r, o.detail ?? 1, noise, 0.22, rnd() * 50), {
-      pos: [bx, cy + by, bz],
-      sphere: { c: [0, cy + (o.column ? R * 0.2 : 0), 0], k: 0.62, sy },
-      colorFn: (c, x, y, z, nx, ny) => {
-        const t = smoothstep(cy - R * 1.1, cy + R * (o.column ? 1.8 : 1.2), y);
-        c.copy(dark).lerp(light, t).multiplyScalar(jit * (0.7 + 0.3 * (ny * 0.5 + 0.5)));
-      },
-      aWind: (x, y) => 0.55 + 0.45 * smoothstep(cy - R, cy + R * 1.3, y),
-    });
-  }
-  if (o.fruit) {
-    const fc = C(o.fruit);
-    for (let k = 0; k < (o.fruitN ?? 12); k++) {
-      const b = blobs[Math.floor(rnd() * (blobs.length - 1))];
-      const a = rnd() * Math.PI * 2, yy = -0.55 + rnd() * 0.95;
-      const rr = Math.sqrt(1 - yy * yy);
-      const r = R * b[3] * 1.02;
-      const p = [b[0] + Math.cos(a) * rr * r, cy + b[1] + yy * r, b[2] + Math.sin(a) * rr * r];
-      B.add(new THREE.SphereGeometry(o.fruitR ?? 0.09, 7, 5), { pos: p, color: fc, colorFn: (c, x, y, z, nx, ny) => c.multiplyScalar(0.75 + 0.35 * (ny * 0.5 + 0.5)), aWind: 0.85 });
-    }
-  }
-  return { geo: B.build(), trunkR: tr, crownR: R * 1.45, h: cy + R };
-}
-
-function pineGeo(noise, seed, o) {
-  const rnd = mulberry32(seed);
-  const B = new GeoBuilder(['aWind']);
-  const H = o.H, tr = o.tr;
-  B.add(new THREE.CylinderGeometry(tr * 0.45, tr, H * 0.5, 7, 2), { pos: [0, H * 0.25 - 0.15, 0], color: o.bark, colorFn: (c, x, y) => c.multiplyScalar(0.75 + 0.35 * (noise(x * 5, y * 5 + seed) * 0.5 + 0.5)), aWind: (x, y) => clamp(y / H, 0, 1) * 0.5 });
-  const tiers = o.tiers ?? 4, base = H * 0.2;
-  const dark = C(o.leaf[0]), light = C(o.leaf[1]);
-  for (let i = 0; i < tiers; i++) {
-    const t = i / (tiers - 1);
-    const r = o.R * (1 - t * 0.64) * (0.92 + rnd() * 0.16);
-    const h = (H - base) * (0.44 - t * 0.1);
-    const y0 = base + (H - base - h) * t * 0.98;
-    const phase = rnd() * 10;
-    B.add(new THREE.ConeGeometry(r, h, 11, 3), {
-      pos: [0, y0 + h / 2, 0],
-      warp: (x, y, z) => {
-        const rr = Math.hypot(x, z); if (rr < 1e-4) return null;
-        const a = Math.atan2(z, x);
-        const k = 1 + 0.1 * Math.sin(a * 5 + phase) + 0.07 * noise(a * 2 + phase, y);
-        const q = rr / r;
-        return [x * k, y - q * q * h * 0.18, z * k];
-      },
-      sphere: { c: [0, y0 + h * 0.25, 0], k: 0.5 },
-      colorFn: (c, x, y, z, nx, ny) => {
-        const tt = smoothstep(0, H, y), rim = smoothstep(r * 0.35, r, Math.hypot(x, z));
-        c.copy(dark).lerp(light, tt * 0.65 + rim * 0.3).multiplyScalar(0.72 + 0.28 * (ny * 0.5 + 0.5));
-      },
-      aWind: (x, y) => 0.4 + 0.6 * smoothstep(0, H, y),
-    });
-  }
-  return { geo: B.build(), trunkR: tr, crownR: o.R, h: H };
-}
-
-function bushGeo(noise, seed, o) {
-  const rnd = mulberry32(seed);
-  const B = new GeoBuilder(['aWind']);
-  const dark = C(o.leaf[0]), light = C(o.leaf[1]);
-  const n = 3 + Math.floor(rnd() * 2);
-  const blobs = [];
-  for (let i = 0; i < n; i++) {
-    const a = rnd() * Math.PI * 2, d = i === 0 ? 0 : 0.35 + rnd() * 0.2;
-    const r = (i === 0 ? 0.62 : 0.42 + rnd() * 0.18) * o.R;
-    blobs.push([Math.cos(a) * d * o.R, r * 0.55, Math.sin(a) * d * o.R, r]);
-  }
-  for (const [x, y, z, r] of blobs) {
-    const jit = 0.9 + rnd() * 0.2;
-    B.add(blobGeo(r, 1, noise, 0.25, rnd() * 40), {
-      pos: [x, y, z], sphere: { c: [0, o.R * 0.25, 0], k: 0.6 },
-      colorFn: (c, px, py, pz, nx, ny) => c.copy(dark).lerp(light, smoothstep(0, o.R * 1.1, py)).multiplyScalar(jit * (0.68 + 0.32 * (ny * 0.5 + 0.5))),
-      aWind: (px, py) => clamp(py / o.R, 0, 1) * 0.8,
-    });
-  }
-  if (o.dots) {
-    const dc = C(o.dots);
-    for (let k = 0; k < (o.dotN ?? 14); k++) {
-      const b = blobs[Math.floor(rnd() * blobs.length)];
-      const a = rnd() * Math.PI * 2, yy = -0.1 + rnd() * 0.95, rr = Math.sqrt(1 - yy * yy);
-      B.add(new THREE.IcosahedronGeometry(o.dotR ?? 0.06, 0), { pos: [b[0] + Math.cos(a) * rr * b[3], b[1] + yy * b[3], b[2] + Math.sin(a) * rr * b[3]], color: dc, colorFn: (c) => c.multiplyScalar(0.85 + rnd() * 0.3), aWind: 0.8 });
-    }
-  }
-  return { geo: B.build() };
-}
-
 function rockGeo(noise, seed, flat) {
   const B = new GeoBuilder(['aWind']);
   const base = C('#8f8b84'), moss = C('#6f8c45'), dark = C('#6c6a66');
@@ -306,23 +182,6 @@ function mushroomGeo(red) {
   B.add(cap, { pos: [0, 0.15, 0], scale: [1, 0.75, 1], color: red ? '#d2392b' : '#9a6a3f', colorFn: red ? (c, x, y, z) => { const d = Math.sin(x * 70) * Math.sin(z * 70) * Math.sin(y * 50 + 1); if (d > 0.45) c.set('#fbf6ea'); } : (c, x, y) => c.multiplyScalar(0.85 + 0.6 * (y - 0.15)) });
   return B.build();
 }
-function logGeo(noise, len, r) {
-  const B = new GeoBuilder();
-  B.add(new THREE.CylinderGeometry(r, r * 1.05, len, 10, 4), {
-    rot: [0, 0, Math.PI / 2], color: '#6d4c33',
-    colorFn: (c, x, y, z, nx, ny) => { if (Math.abs(nx) > 0.9) { c.set('#b98d5c'); return; } c.multiplyScalar(0.75 + 0.35 * (noise(x * 4, Math.atan2(z, y) * 3) * 0.5 + 0.5)); c.lerp(C('#6f8c45'), smoothstep(0.5, 0.9, ny + noise(x * 2, z * 3) * 0.3) * 0.8); },
-  });
-  return B.build();
-}
-function stumpGeo(noise) {
-  const B = new GeoBuilder();
-  B.add(new THREE.CylinderGeometry(0.34, 0.46, 0.45, 10, 2), {
-    pos: [0, 0.2, 0], color: '#6a4a32',
-    colorFn: (c, x, y, z, nx, ny) => { if (ny > 0.9) { const rr = Math.hypot(x, z); c.set('#c49a66').multiplyScalar(0.85 + 0.15 * Math.sin(rr * 60)); return; } c.multiplyScalar(0.75 + 0.35 * (noise(Math.atan2(z, x) * 3, y * 6) * 0.5 + 0.5)); },
-  });
-  return B.build();
-}
-
 // ---------------------------------------------------------------- vegetation
 export class Vegetation {
   constructor(T, U, colliders) {
@@ -560,43 +419,11 @@ export class Vegetation {
   // ---------------------------------------------------------------- meshes
   build(structures, isTilled) {
     const T = this.T, U = this.U, noise = T.noise;
-    const treeMat = patchVeg(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0 }), U, { attr: 'aWind', amp: 0.2, flutter: 0.012, trans: 0.3, freq: 0.9, occlude: true });
-    const treeDepth = patchVeg(new THREE.MeshDepthMaterial(), U, { attr: 'aWind', amp: 0.2, flutter: 0.012, trans: 0.3, freq: 0.9, occlude: true });
-    this.treeMat = treeMat;
-    const P = {};
-    P.oak = [0, 1, 2].map(v => broadleafGeo(noise, 11 + v * 7, { th: 2.3 + v * 0.3, tr: 0.26, R: 1.55 + v * 0.15, bark: '#6e4d36', leaf: ['#3f7a2a', '#86b443'], bend: 1, blobs: 5 }));
-    P.birch = [0, 1, 2].map(v => broadleafGeo(noise, 41 + v * 5, { th: 3.4 + v * 0.4, tr: 0.15, R: 1.15 + v * 0.1, bark: '#ece6da', leaf: ['#6f9a35', '#c2d65c'], bend: 0.6, column: true, birch: true, branches: 1 }));
-    P.blossom = [0, 1, 2].map(v => broadleafGeo(noise, 71 + v * 3, { th: 2.1 + v * 0.2, tr: 0.22, R: 1.5 + v * 0.1, bark: '#5b3f33', leaf: ['#e48aa9', '#fbd4e0'], bend: 1.4, blobs: 6, detail: 2 }));
-    P.apple = [0, 1, 2].map(v => broadleafGeo(noise, 91 + v * 13, { th: 1.55 + v * 0.15, tr: 0.2, R: 1.25 + v * 0.08, bark: '#6b4a33', leaf: ['#4d8a2f', '#9cc24a'], bend: 1.2, blobs: 5, detail: 2, fruit: '#d23a2a', fruitN: 14 }));
-    P.pine = [0, 1, 2].map(v => pineGeo(noise, 21 + v * 9, { H: 6.2 + v * 0.9, tr: 0.22, R: 1.65 + v * 0.15, bark: '#5c4030', leaf: ['#244f34', '#4f8a4c'], tiers: 4 + (v === 2 ? 1 : 0) }));
-    // trees: chunked instanced meshes
-    const byKey = new Map();
-    for (const it of this.items.tree) {
-      const key = it.kind + it.v + '|' + Math.floor((it.x + 130) / 52) + ',' + Math.floor((it.z + 130) / 52);
-      let a = byKey.get(key); if (!a) { a = []; byKey.set(key, a); }
-      a.push(it);
-    }
-    for (const [key, list] of byKey) {
-      const kind = key.replace(/[0-9].*$/, ''), v = +key.match(/[0-9]/)[0];
-      const geo = P[kind][v].geo;
-      const m = new THREE.InstancedMesh(geo, treeMat, list.length);
-      list.forEach((it, i) => {
-        _q.setFromAxisAngle(UPV, it.rot); _s.setScalar(it.s); _p.set(it.x, it.y, it.z);
-        _m.compose(_p, _q, _s); m.setMatrixAt(i, _m);
-        m.setColorAt(i, _c.setRGB(it.tint, it.tint * (0.97 + (i % 5) * 0.012), it.tint * 0.97));
-      });
-      m.castShadow = true; m.receiveShadow = true; m.customDepthMaterial = treeDepth;
-      m.computeBoundingSphere();
-      this.group.add(m);
-    }
-    // bushes
-    const bushG = [
-      bushGeo(noise, 3, { R: 1, leaf: ['#3e7a2c', '#7fae42'] }),
-      bushGeo(noise, 5, { R: 1, leaf: ['#3a7030', '#73a540'], dots: '#f4f0ea', dotN: 18, dotR: 0.07 }),
-      bushGeo(noise, 7, { R: 1, leaf: ['#3e7a2c', '#86b44a'], dots: '#e2456b', dotN: 16, dotR: 0.065 }),
-      bushGeo(noise, 9, { R: 1, leaf: ['#3a6e2e', '#79a843'], dots: '#8a9cf0', dotN: 20, dotR: 0.075 }),
-    ];
-    this.instanceSet(bushG.map(b => b.geo), this.items.bush, treeMat, treeDepth, true);
+    // realistic trees & bushes (procedural skeletons + bark textures + leaf-atlas cards, LOD managed per frame)
+    this.trees = new TreeField(U, this.items.tree, this.items.bush);
+    if (this.qk) this.trees.setQuality(this.qk);
+    this.group.add(this.trees.group);
+    this.frustum = new THREE.Frustum(); this._pm = new THREE.Matrix4();
     // rocks
     const rockMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0 });
     const rockG = [rockGeo(noise, 1.3, [1, 0.62, 0.86]), rockGeo(noise, 7.7, [1.1, 0.5, 0.8]), rockGeo(noise, 3.1, [0.9, 0.78, 0.9])];
@@ -607,17 +434,20 @@ export class Vegetation {
     if (mr.length) this.group.add(this.inst(mushroomGeo(true), mushMat, mr, true));
     if (mb.length) this.group.add(this.inst(mushroomGeo(false), mushMat, mb, true));
     // logs & stumps (static)
-    const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
-    for (const l of this.items.log) {
-      const m = new THREE.Mesh(logGeo(noise, l.len, 0.3), woodMat);
-      m.position.set(l.x, T.heightAt(l.x, l.z) + 0.22, l.z); m.rotation.y = l.rot;
-      m.castShadow = m.receiveShadow = true; this.group.add(m);
-    }
-    const sg = stumpGeo(noise);
-    for (const s of this.items.stump) {
-      const m = new THREE.Mesh(sg, woodMat); m.position.set(s.x, T.heightAt(s.x, s.z) - 0.05, s.z); m.scale.setScalar(s.s);
-      m.castShadow = m.receiveShadow = true; this.group.add(m);
-    }
+    // realistic dead wood: bark-textured tubes with mossy tops + tree-ring cut ends
+    const bk = TEX.bark && TEX.bark.oak;
+    const woodMat = new THREE.MeshStandardMaterial({ map: bk ? bk.map : null, normalMap: bk ? bk.normalMap : null, normalScale: new THREE.Vector2(1.3, 1.3), vertexColors: true, roughness: 0.92 });
+    const ringMat = new THREE.MeshStandardMaterial({ map: ringTexture(), vertexColors: true, roughness: 0.86 });
+    const addWood = (g, x, y, z, rotY, sc) => {
+      for (const [geo, mat] of [[g.bark, woodMat], [g.cap, ringMat]]) {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, y, z); m.rotation.y = rotY; m.scale.setScalar(sc);
+        m.castShadow = m.receiveShadow = true; this.group.add(m);
+      }
+    };
+    this.items.log.forEach((l, i) => addWood(genLog(l.len, 0.3, 11 + i * 7), l.x, T.heightAt(l.x, l.z) + 0.22, l.z, l.rot, 1));
+    const stumps = [genStump(3), genStump(8), genStump(21)];
+    this.items.stump.forEach((s, i) => addWood(stumps[i % 3], s.x, T.heightAt(s.x, s.z) - 0.05, s.z, i * 2.1, s.s));
     this.buildWaterPlants();
     this.bakeGrassMask(structures);
     this.grass = new GrassField(this.T, this.U, this.qk || 'medium');
@@ -857,16 +687,23 @@ export class Vegetation {
   setQuality(q) {
     this.qk = q; this.quality = q === 'high' ? 1 : q === 'low' ? 0.38 : 0.7;
     if (this.grass) this.grass.setQuality(q);
+    if (this.trees) this.trees.setQuality(q);
   }
-  update(camera) {
-    if (this.grass) { camera.updateMatrixWorld(); this.grass.update(camera); }
+  update(camera, focus) {
+    camera.updateMatrixWorld();
+    if (this.grass) this.grass.update(camera);
+    if (this.trees) {
+      this._pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      this.frustum.setFromProjectionMatrix(this._pm);
+      this.trees.update(camera, focus || camera.position, this.frustum);
+    }
   }
 }
 
 const TREE_INFO = {
-  oak: { trunk: 0.36, crown: 2.6, space: 3.2 },
-  birch: { trunk: 0.24, crown: 1.9, space: 2.4 },
-  blossom: { trunk: 0.32, crown: 2.5, space: 3.2 },
-  apple: { trunk: 0.3, crown: 2.0, space: 2.8 },
-  pine: { trunk: 0.32, crown: 2.0, space: 2.7 },
+  oak: { trunk: 0.36, crown: 3.6, space: 3.2 },
+  birch: { trunk: 0.22, crown: 2.2, space: 2.4 },
+  blossom: { trunk: 0.3, crown: 3.1, space: 3.2 },
+  apple: { trunk: 0.24, crown: 2.4, space: 2.8 },
+  pine: { trunk: 0.34, crown: 2.6, space: 2.7 },
 };

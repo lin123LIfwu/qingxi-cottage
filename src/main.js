@@ -598,7 +598,7 @@ class Game {
     const uw = this.U.uWet;
     uw.value = Math.max(this.env.wx.rain, uw.value - rdt * (S.weather === 'rain' ? 0 : 0.0035 * S.settings.speed));
     this.structures.update(rdt, t, this.env.nightK);
-    this.veg.update(this.camera);
+    this.veg.update(this.camera, this.U.uFocus.value);
     const hand = p.root.position.clone(); hand.y += 1.2;
     this.farm.update(rdt, hand);
     this.ripeT -= rdt;

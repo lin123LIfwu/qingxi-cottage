@@ -254,16 +254,16 @@ export function buildLeafAtlas(renderer) {
     ctx.restore();
   };
   const twigCol = '#5d4a3a';
-  cell(CELL.oakA, 11, R => sprig(ctx, R, { len: 400, sides: 4, perTwig: 6, tipCluster: true, leafLen: 92, aspect: 0.55, spread: [0.3, 1.1], shape: 'oak', col: [88, 0.42, 0.27], tw: 6, twigCol }));
-  cell(CELL.oakB, 12, R => sprig(ctx, R, { len: 380, sides: 5, perTwig: 5, tipCluster: true, leafLen: 86, aspect: 0.55, spread: [0.3, 1.2], shape: 'oak', col: [84, 0.4, 0.25], tw: 6, twigCol }));
-  cell(CELL.birchA, 21, R => sprig(ctx, R, { len: 440, sides: 5, perTwig: 9, leafLen: 50, aspect: 0.72, spread: [0.5, 1.2], shape: 'birch', col: [78, 0.5, 0.36], tw: 3.5, twigCol: '#4a3b33' }));
-  cell(CELL.birchB, 22, R => sprig(ctx, R, { len: 420, sides: 6, perTwig: 8, leafLen: 46, aspect: 0.75, spread: [0.5, 1.3], shape: 'birch', col: [74, 0.48, 0.34], tw: 3.5, twigCol: '#4a3b33' }));
+  cell(CELL.oakA, 11, R => sprig(ctx, R, { len: 400, sides: 4, perTwig: 6, tipCluster: true, leafLen: 92, aspect: 0.55, spread: [0.3, 1.1], shape: 'oak', col: [90, 0.5, 0.31], tw: 6, twigCol }));
+  cell(CELL.oakB, 12, R => sprig(ctx, R, { len: 380, sides: 5, perTwig: 5, tipCluster: true, leafLen: 86, aspect: 0.55, spread: [0.3, 1.2], shape: 'oak', col: [86, 0.48, 0.29], tw: 6, twigCol }));
+  cell(CELL.birchA, 21, R => sprig(ctx, R, { len: 440, sides: 5, perTwig: 9, leafLen: 50, aspect: 0.72, spread: [0.5, 1.2], shape: 'birch', col: [80, 0.56, 0.38], tw: 3.5, twigCol: '#4a3b33' }));
+  cell(CELL.birchB, 22, R => sprig(ctx, R, { len: 420, sides: 6, perTwig: 8, leafLen: 46, aspect: 0.75, spread: [0.5, 1.3], shape: 'birch', col: [76, 0.54, 0.36], tw: 3.5, twigCol: '#4a3b33' }));
   cell(CELL.appleA, 31, R => {
-    const br = sprig(ctx, R, { len: 400, sides: 4, perTwig: 6, leafLen: 74, aspect: 0.5, spread: [0.4, 1.1], shape: 'ovate', col: [92, 0.42, 0.29], tw: 5, twigCol });
+    const br = sprig(ctx, R, { len: 400, sides: 4, perTwig: 6, leafLen: 74, aspect: 0.5, spread: [0.4, 1.1], shape: 'ovate', col: [94, 0.5, 0.32], tw: 5, twigCol });
     for (let k = 0; k < 3; k++) { const b = br[1 + (k % (br.length - 1))], [x, y] = at(b.pts, 0.5 + R() * 0.4); apple(ctx, R, x + (R() - 0.5) * 30, y + 26, 26 + R() * 6); }
     const b = br[0]; const [x, y] = at(b.pts, 0.7); drawLeaf(ctx, R, x + 10, y, 0.8, 70, 34, 'ovate', [92, 0.42, 0.3], 1.05);
   });
-  cell(CELL.appleB, 32, R => sprig(ctx, R, { len: 410, sides: 5, perTwig: 6, leafLen: 70, aspect: 0.5, spread: [0.4, 1.1], shape: 'ovate', col: [90, 0.4, 0.28], tw: 5, twigCol }));
+  cell(CELL.appleB, 32, R => sprig(ctx, R, { len: 410, sides: 5, perTwig: 6, leafLen: 70, aspect: 0.5, spread: [0.4, 1.1], shape: 'ovate', col: [92, 0.48, 0.31], tw: 5, twigCol }));
   for (const [ci, seed] of [[CELL.blossomA, 41], [CELL.blossomB, 42]]) cell(ci, seed, R => {
     const br = sprig(ctx, R, { len: 410, sides: 5, perTwig: 2, leafLen: 50, aspect: 0.5, spread: [0.5, 1.0], shape: 'ovate', col: [95, 0.45, 0.4], tw: 5, twigCol: '#4b3631' });
     const fl = [];
@@ -273,16 +273,16 @@ export function buildLeafAtlas(renderer) {
   });
   cell(CELL.spruceA, 51, R => needleSpray(ctx, R, { len: 460, sides: 9, step: 3.2, nLen: 26, nW: 2.6, col: [140, 0.35, 0.2], tip: [110, 0.4, 0.33] }));
   cell(CELL.spruceB, 52, R => needleSpray(ctx, R, { len: 440, sides: 11, step: 3.0, nLen: 24, nW: 2.6, col: [145, 0.32, 0.18], tip: [115, 0.38, 0.3] }));
-  cell(CELL.bushA, 61, R => sprig(ctx, R, { len: 420, sides: 7, perTwig: 11, leafLen: 44, aspect: 0.55, spread: [0.5, 1.2], shape: 'ovate', col: [96, 0.42, 0.26], tw: 3.5, twigCol }));
+  cell(CELL.bushA, 61, R => sprig(ctx, R, { len: 420, sides: 7, perTwig: 11, leafLen: 44, aspect: 0.55, spread: [0.5, 1.2], shape: 'ovate', col: [98, 0.5, 0.3], tw: 3.5, twigCol }));
   const flowerBush = (ci, seed, pal, kind) => cell(ci, seed, R => {
-    const br = sprig(ctx, R, { len: 420, sides: 6, perTwig: 9, leafLen: 46, aspect: 0.55, spread: [0.5, 1.2], shape: 'ovate', col: [98, 0.42, 0.26], tw: 3.5, twigCol });
+    const br = sprig(ctx, R, { len: 420, sides: 6, perTwig: 9, leafLen: 46, aspect: 0.55, spread: [0.5, 1.2], shape: 'ovate', col: [100, 0.5, 0.31], tw: 3.5, twigCol });
     for (const b of br) {
       const [x, y] = at(b.pts, 1);
       if (kind === 'blue') { for (let k = 0; k < 26; k++) { const a = R() * 6.28, d = Math.sqrt(R()) * 44; blossom(ctx, R, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.8, 10 + R() * 4, jit(R, pal, 10, 0.08, 0.06)); } }
-      else for (let k = 0; k < 3; k++) blossom(ctx, R, x + (R() - 0.5) * 50, y + (R() - 0.5) * 40, kind === 'pink' ? 24 + R() * 6 : 15 + R() * 5, jit(R, pal, 6, 0.06, 0.04));
+      else for (let k = 0, nk = kind === 'pink' ? 3 : 2; k < nk; k++) blossom(ctx, R, x + (R() - 0.5) * 50, y + (R() - 0.5) * 40, kind === 'pink' ? 24 + R() * 6 : 13 + R() * 4, jit(R, pal, 6, 0.06, 0.04));
     }
   });
-  flowerBush(CELL.bushWhite, 62, [50, 0.25, 0.92], 'white');
+  flowerBush(CELL.bushWhite, 62, [48, 0.45, 0.93], 'white');
   flowerBush(CELL.bushPink, 63, [338, 0.6, 0.68], 'pink');
   flowerBush(CELL.bushBlue, 64, [222, 0.55, 0.66], 'blue');
   cell(CELL.flowers, 71, R => wildflowers(ctx, R));
