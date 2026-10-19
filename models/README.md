@@ -1,6 +1,11 @@
 # 青溪小筑 · 模型源文件
 
-游戏里用到的 3D 模型的源文件。全部在 **Blender 4.5** 里用 Python 脚本程序化建模、程序化材质，再烘焙成 PBR 贴图并导出 glTF（GLB）。
+游戏里用到的 3D 模型的源文件：
+
+- **四件工具**（锄头、水壶、鱼竿、种子袋）：全部在 **Blender 4.5** 里用 Python 脚本程序化建模、程序化材质，再烘焙成 PBR 贴图并导出 glTF（GLB）。
+- **主角人物**（戴渔夫帽、穿休闲装的青年，带 53 根骨骼的游戏骨架）：用 MakeHuman 人体（CC0）在 Blender + MPFB 2 里生成，渔夫帽为脚本建模，详见 [character/README.md](character/README.md)。
+
+![人物预览](preview/character.svg)
 
 ![四件工具总览](preview/overview.svg)
 
@@ -13,11 +18,14 @@
 ```
 models/
   blend/*.blend.b64     Blender 工程（贴图已打包进文件，WebP 格式）
-  glb/*.glb.b64         Blender 直接导出的 GLB（完整精度，可导入其他引擎 / 软件）
-  source/               全部生成脚本：改参数后重新生成模型和贴图
-  game_export/          GLB → 游戏资源：压缩（Meshopt + WebP）并写成 src/assets/*.glb.js
-  preview/              上面三张预览图
-  decode.py             把 .b64 还原成 .blend / .glb
+                        人物较大，拆成 farmer.blend.b64.part1…6
+  glb/*.glb.b64         工具：Blender 直接导出的 GLB（完整精度，可导入其他引擎 / 软件）
+                        人物：游戏里用的 GLB（Meshopt + WebP），拆成 farmer.glb.b64.part1…2
+  source/               工具的全部生成脚本：改参数后重新生成模型和贴图
+  character/            人物的生成脚本和说明（README.md）
+  game_export/          工具 GLB → 游戏资源：压缩（Meshopt + WebP）并写成 src/assets/*.glb.js
+  preview/              上面几张预览图
+  decode.py             把 .b64（含分段的 .b64.partN）还原成 .blend / .glb
 ```
 
 ## 下载后先还原二进制文件
@@ -28,8 +36,8 @@ GitHub 网页接口只能提交文本，所以 `.blend` 和 `.glb` 以 base64 �
 python3 decode.py
 ```
 
-就会在旁边生成 `blend/hoe.blend`、`glb/hoe.glb` 等文件，用 Blender 直接打开即可。
-不想装 Python 也可以用系统自带命令：
+就会在旁边生成 `blend/hoe.blend`、`glb/hoe.glb`、`blend/farmer.blend`、`glb/farmer.glb` 等文件（分段文件会自动按顺序拼接），用 Blender 直接打开即可。
+不想装 Python 也可以用系统自带命令（分段文件要先拼接，见 [character/README.md](character/README.md)）：
 
 | 系统 | 命令 |
 |---|---|
@@ -53,8 +61,9 @@ python3 decode.py
 | 水壶 `can` | 10,244 | `WateringCan` › `Spout` | 壶身高 34 cm，含壶嘴总长 60 cm，握点 = 提手顶端。青绿搪瓷壶身、加强筋和卷边、磕碰掉漆、底部泥渍、铆接提手、锡焊壶嘴、91 孔黄铜莲蓬头。`Spout` 是空节点（莲蓬头出水面外 6 mm），游戏用它发射水流粒子 |
 | 鱼竿 `rod` | 10,894 | `RodBase` › `Crank` › `Knob`；`RodBase` › `Seg1` › `Seg2` › `Seg3` › `Tip` | 全长 191.5 cm。三节竹竿带竹节、红色丝线缠绕 + 金线收边、蛇形导环、软木握把、胡桃木轮座；纺车轮：墨绿轮体、金色线杯、鱼线。转 `Crank` 的 rotation.x 就是摇轮动画；给 `Seg1/2/3` 加一点 rotation.x 就能弯竿；`Tip` 是竿梢出线点 |
 | 种子袋 `packet` | 4,360 | `Packet` › `Icon` | 9.4 × 14.2 cm。正面标签、背面播种指南、折痕、封口压纹。换作物只需替换 `Icon` 材质的贴图（256×256 透明图），游戏里会随所选种子自动切换 |
+| 人物 `farmer` | 62,788 | `Root` › `pelvis` …（53 根骨骼，Unreal 人形骨架命名） | 身高约 1.75 m（帽顶约 1.84 m）。MakeHuman 写实人体（约 25 岁、偏亚洲面孔）、鼠尾草绿短袖 T 恤、牛仔裤、休闲鞋、短发；沙色棉帆布渔夫帽挂在 `head` 骨骼上。8 个材质，原点在两脚之间的地面，面朝 +Z。详见 [character/README.md](character/README.md) |
 
-## 重新生成
+## 重新生成（工具）
 
 需要：Blender 4.5（无界面模式即可）；系统 `python3` + Pillow + numpy；Noto Sans SC 和 Noto Color Emoji 字体（路径写在 `packet_art.py` 开头）。
 
