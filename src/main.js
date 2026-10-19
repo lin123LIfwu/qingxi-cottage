@@ -5,6 +5,7 @@ import { bakeTextures } from './gen/texgen.js';
 import { buildLeafAtlas } from './gen/leafgen.js';
 import { Colliders } from './world/colliders.js';
 import { Vegetation } from './world/vegetation.js';
+import { loadModels } from './assets/models.js';
 import { Environment } from './world/environment.js';
 import { Water } from './world/water.js';
 import { Structures } from './world/structures.js';
@@ -97,6 +98,7 @@ class Game {
     veg.build(st, (x, z) => farm.isTilled(x, z));
     scene.add(veg.group);
     loading.set('正在叫醒小镇居民……', 0.86); await nextFrame();
+    await loadModels(renderer);
     const player = this.player = new Player(T, col, U);
     scene.add(player.root);
     const P = S.player;
@@ -278,7 +280,7 @@ class Game {
     this.S.tool = clamp(i, 0, SLOTS.length - 1);
     const s = this.slot();
     this.player.setTool(s.type === 'seed' ? 'seeds' : s.id);
-    if (s.type === 'seed' && this.vm) this.vm.setSeed(s.id, CROPS[s.id].icon);
+    if (s.type === 'seed') { this.player.setSeed(s.id); this.vm && this.vm.setSeed(s.id); }
     if (!silent) {
       this.sfx('select', 0.6);
       let name = s.name;

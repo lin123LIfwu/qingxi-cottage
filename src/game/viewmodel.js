@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { GeoBuilder } from '../util/geo.js';
 import { clamp, lerp, smoothstep, damp } from '../util/math.js';
+import { toolModel, cropIconNow } from '../assets/models.js';
 
 const _e = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _c = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -80,126 +81,43 @@ function forearmGeometry() {
   });
 }
 
-function woodGrain(base, k = 1) {
-  return (c, x, y, z) => c.multiplyScalar(0.86 + 0.09 * k * Math.sin(y * 31 + Math.atan2(z, x) * 2) + 0.05 * k * Math.sin(y * 127 + x * 300));
+// ------------------------------------------------------------------ tools
+// The tools are the Blender models (src/assets): each one was built in the same frame as the
+// old procedural stand-ins here (grip at the origin), so the poses below did not change.
+function vmTool(key, U, cache) {
+  const g = toolModel(key);
+  g.traverse(o => {
+    if (!o.isMesh) return;
+    let m = cache.get(o.material);
+    if (!m) { m = vmPatch(o.material.clone(), U); cache.set(o.material, m); }
+    o.material = m;
+  });
+  return g;
 }
+const firstMesh = (o) => { let r = null; o.traverse(c => { if (!r && c.isMesh) r = c; }); return r; };
 
-function buildHoe(m) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(geo(B => {
-    // held one-handed near the butt end, so only a short stub shows below the fist
-    B.add(new THREE.CylinderGeometry(0.0165, 0.018, 0.96, 10, 8), { pos: [0, 0.37, 0], color: '#a77a4d', colorFn: woodGrain() });
-    B.add(new THREE.SphereGeometry(0.0182, 10, 6), { pos: [0, -0.11, 0], scale: [1, 0.55, 1], color: '#8a603b' });
-  }), m.wood));
-  g.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.CylinderGeometry(0.0195, 0.021, 0.09, 12), { pos: [0, 0.84, 0], color: '#5c6368' });
-    B.add(new THREE.CylinderGeometry(0.0085, 0.0095, 0.1, 8), { pos: [0, 0.905, -0.03], rot: [-0.95, 0, 0], color: '#575e63' });
-    // blade: plane perpendicular to the handle, hanging towards the knuckle side (-Z)
-    B.add(new THREE.BoxGeometry(0.175, 0.007, 0.115, 6, 1, 4), {
-      pos: [0, 0.915, -0.105], rot: [0.32, 0, 0], color: '#7f888e',
-      colorFn: (c, x, y, z) => { if (z < -0.15) c.set('#c9cfd3'); else c.multiplyScalar(0.92 + 0.12 * Math.sin(x * 90 + z * 40)); },
-    });
-  }), m.metal));
-  return { g, gripR: P(0, 0, 0, 0, -0.35, 0), gripL: P(0, -0.32, 0, 0, -0.1, 0) };
+function buildHoe(U, c) {
+  // held one-handed near the butt end, the blade hanging towards the knuckle side (-Z)
+  return { g: vmTool('hoe', U, c), gripR: P(0, 0, 0, 0, -0.35, 0), gripL: P(0, -0.32, 0, 0, -0.1, 0) };
 }
-
-function buildCan(m) {
-  const g = new THREE.Group();
-  const C = '#5aa59a', D = '#3c8075';
-  const body = new THREE.Group(); g.add(body);
-  body.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.CylinderGeometry(0.104, 0.118, 0.235, 26, 3), { pos: [0, -0.2, 0], color: C });
-    B.add(new THREE.SphereGeometry(0.104, 26, 8, 0, Math.PI * 2, 0, Math.PI / 2), { pos: [0, -0.083, 0], scale: [1, 0.3, 1], color: C });
-    B.add(new THREE.TorusGeometry(0.115, 0.008, 6, 30), { pos: [0, -0.316, 0], rot: [Math.PI / 2, 0, 0], color: D });
-    B.add(new THREE.TorusGeometry(0.105, 0.007, 6, 30), { pos: [0, -0.084, 0], rot: [Math.PI / 2, 0, 0], color: D });
-    B.add(new THREE.TorusGeometry(0.038, 0.007, 6, 18), { pos: [0, -0.052, 0.05], rot: [Math.PI / 2, 0, 0], color: D });
-    // top handle: an arch running front-to-back
-    B.add(new THREE.TorusGeometry(0.078, 0.0115, 8, 22, Math.PI), { pos: [0, -0.062, 0], rot: [0, Math.PI / 2, 0], color: D });
-    // spout rising from the lower front + brace
-    B.add(new THREE.CylinderGeometry(0.0105, 0.02, 0.36, 12), { pos: [0, -0.158, -0.25], rot: [-1.03, 0, 0], color: C });
-    B.add(new THREE.CylinderGeometry(0.0045, 0.0045, 0.16, 6), { pos: [0, -0.12, -0.175], rot: [-1.55, 0, 0], color: D });
-    B.add(new THREE.CylinderGeometry(0.033, 0.0125, 0.05, 16), { pos: [0, -0.052, -0.418], rot: [-1.03, 0, 0], color: D });
-  }), m.paint));
-  // the rose: perforated face
-  body.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.CylinderGeometry(0.033, 0.033, 0.004, 18, 1), { pos: [0, -0.04, -0.439], rot: [-1.03, 0, 0], color: '#b9c2c4',
-      colorFn: (c, x, y, z) => { const r = Math.hypot(x, (y + 0.04) * 1.9, (z + 0.439) * 1.15); if (Math.sin(r * 420) > 0.55) c.multiplyScalar(0.45); } });
-  }), m.metal));
-  const spout = new THREE.Object3D(); spout.position.set(0, -0.036, -0.446); body.add(spout);
-  return { g, spout, gripR: P(0, 0.016, 0, -Math.PI / 2, 0, 0) };
+function buildCan(U, c) {
+  // grip = the top of the strap handle; the spout runs out towards -Z
+  const g = vmTool('can', U, c);
+  return { g, spout: g.getObjectByName('Spout'), gripR: P(0, 0.016, 0, -Math.PI / 2, 0, 0) };
 }
-
-function buildRod(m) {
-  const g = new THREE.Group();
-  const cork = (c, x, y, z) => c.multiplyScalar(0.84 + 0.16 * Math.sin(x * 2100 + y * 1700) * Math.sin(z * 1900 - y * 900));
-  g.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.CylinderGeometry(0.0175, 0.019, 0.3, 12, 4), { pos: [0, -0.12, 0], color: '#c9a46c', colorFn: cork });
-    B.add(new THREE.CylinderGeometry(0.0195, 0.0195, 0.035, 12), { pos: [0, -0.285, 0], color: '#3b302a' });
-    B.add(new THREE.CylinderGeometry(0.0135, 0.0165, 0.08, 12), { pos: [0, 0.07, 0], color: '#c9a46c', colorFn: cork });
-  }), m.wood));
-  g.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.CylinderGeometry(0.0155, 0.0155, 0.06, 12), { pos: [0, 0.0, 0], color: '#3e434a' });
-    // spinning reel hanging below the rod (-Z)
-    B.add(new THREE.BoxGeometry(0.008, 0.03, 0.03), { pos: [0, 0.0, -0.028], color: '#3e434a' });
-    B.add(new THREE.SphereGeometry(1, 14, 10), { pos: [0, -0.005, -0.058], scale: [0.02, 0.028, 0.021], color: '#454b52' });
-    B.add(new THREE.CylinderGeometry(0.024, 0.024, 0.032, 18), { pos: [0, 0.036, -0.06], color: '#c8a24a' });
-    B.add(new THREE.CylinderGeometry(0.026, 0.026, 0.006, 18), { pos: [0, 0.054, -0.06], color: '#3e434a' });
-    B.add(new THREE.CylinderGeometry(0.004, 0.004, 0.03, 6), { pos: [-0.016, -0.005, -0.058], rot: [0, 0, Math.PI / 2], color: '#2f3338' });
-  }), m.metal));
-  // the blank: three bamboo segments so it can bend
-  const segL = [0.52, 0.5, 0.48], segR = [0.0115, 0.0085, 0.0058, 0.0028];
-  const segs = []; let parent = g, y0 = 0.11;
-  for (let i = 0; i < 3; i++) {
-    const s = new THREE.Group(); s.position.y = i === 0 ? y0 : segL[i - 1]; parent.add(s);
-    const L = segL[i];
-    s.add(new THREE.Mesh(geo(B => {
-      B.add(new THREE.CylinderGeometry(segR[i + 1], segR[i], L, 8, 6), { pos: [0, L / 2, 0], color: '#cfa766',
-        colorFn: (c, x, y) => { const k = (y + i * 0.13) % 0.24; if (k < 0.012) c.set('#8f6a3a'); else c.multiplyScalar(0.92 + 0.08 * Math.sin(y * 70 + x * 500)); } });
-    }), m.wood));
-    s.add(new THREE.Mesh(geo(B => {
-      for (const gy of [0.2, 0.42]) {
-        B.add(new THREE.CylinderGeometry(0.0016, 0.0016, 0.022, 4), { pos: [0, gy * L / 0.5, -0.011 - segR[i] * 0.5], rot: [Math.PI / 2, 0, 0], color: '#9aa1a6' });
-        B.add(new THREE.TorusGeometry(0.0055 - i * 0.0012, 0.0012, 4, 10), { pos: [0, gy * L / 0.5, -0.024 - segR[i] * 0.5], color: '#b9c0c4' });
-      }
-    }), m.metal));
-    segs.push(s); parent = s;
-  }
-  const tip = new THREE.Object3D(); tip.position.y = segL[2]; segs[2].add(tip);
-  // reel crank (rotates about X), on the left side of the reel
-  const crank = new THREE.Group(); crank.position.set(-0.024, -0.005, -0.058); g.add(crank);
-  crank.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.BoxGeometry(0.006, 0.05, 0.007), { pos: [-0.006, 0.022, 0], color: '#2f3338' });
-    B.add(new THREE.CylinderGeometry(0.0075, 0.0075, 0.02, 10), { pos: [-0.016, 0.046, 0], rot: [0, 0, Math.PI / 2], color: '#e8e2d4' });
-  }), m.metal));
-  const knob = new THREE.Vector3(-0.03, 0.046, 0);
-  return { g, segs, tip, crank, knob, gripR: P(0, 0, 0, 0, 0.25, 0) };
+function buildRod(U, c) {
+  // three bamboo segments (pivots at the ferrules) so the blank can bend; the crank turns about X
+  const g = vmTool('rod', U, c);
+  const segs = ['Seg1', 'Seg2', 'Seg3'].map(n => g.getObjectByName(n));
+  const crank = g.getObjectByName('Crank'), knob = g.getObjectByName('Knob').position.clone();
+  return { g, segs, tip: g.getObjectByName('Tip'), crank, knob, gripR: P(0, 0, 0, 0, 0.25, 0) };
 }
-
-function packetTexture(icon) {
-  const c = document.createElement('canvas'); c.width = 128; c.height = 176;
-  const x = c.getContext('2d');
-  x.fillStyle = '#f4ead4'; x.fillRect(0, 0, 128, 176);
-  x.fillStyle = '#7fae5a'; x.fillRect(0, 0, 128, 34);
-  x.fillStyle = '#e8d9b6'; x.fillRect(0, 140, 128, 36);
-  x.strokeStyle = '#a07a4a'; x.lineWidth = 4; x.strokeRect(6, 40, 116, 96);
-  x.font = '64px "Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.fillText(icon || '🌱', 64, 90);
-  x.font = 'bold 22px sans-serif'; x.fillStyle = '#6b4a2c'; x.fillText('种 子', 64, 158);
-  x.fillStyle = '#fff'; x.font = 'bold 18px sans-serif'; x.fillText('SEEDS', 64, 18);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
-  return t;
-}
-
-function buildSeeds(m) {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(geo(B => {
-    B.add(new THREE.BoxGeometry(0.094, 0.13, 0.012, 2, 4, 1), { pos: [0, 0.04, 0], color: '#efe4cc',
-      warp: (x, y, z) => [x, y, z * (1 - 0.35 * Math.abs(x) / 0.047)] });
-    B.add(new THREE.BoxGeometry(0.096, 0.012, 0.006), { pos: [0, 0.109, 0], color: '#d8c8a4' });
-  }), m.wood));
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.088, 0.121), m.packet);
-  face.position.set(0, 0.04, 0.0062); g.add(face);
-  return { g, face, gripR: P(0.0, -0.005, 0.0, 0, 1.25, 0) };
+function buildSeeds(U, c) {
+  // the crop icon is a separate decal over the label window: its texture is swapped per seed
+  const g = vmTool('packet', U, c);
+  const icon = firstMesh(g.getObjectByName('Icon'));
+  icon.material = icon.material.clone();
+  return { g, icon, gripR: P(0.0, -0.005, 0.0, 0, 1.25, 0) };
 }
 
 // ------------------------------------------------------------------ poses (camera space)
@@ -238,10 +156,6 @@ export class ViewModel {
     const M = this.M = {
       skin: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.58, metalness: 0 }), U),
       cloth: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }), U),
-      wood: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.66, metalness: 0 }), U),
-      metal: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.75 }), U),
-      paint: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }), U),
-      packet: vmPatch(new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 }), U),
     };
     // hands & forearms
     const hg = handGeometry(), fg = forearmGeometry();
@@ -250,11 +164,11 @@ export class ViewModel {
     for (const o of [this.handR, this.handL, this.armR, this.armL]) this.rig.add(o);
     // tools
     this.toolG = new THREE.Group(); this.rig.add(this.toolG);
-    this.T = { hoe: buildHoe(M), can: buildCan(M), rod: buildRod(M), seeds: buildSeeds(M) };
+    const mc = new Map();
+    this.T = { hoe: buildHoe(U, mc), can: buildCan(U, mc), rod: buildRod(U, mc), seeds: buildSeeds(U, mc) };
     for (const k in this.T) { this.T[k].g.visible = false; this.toolG.add(this.T[k].g); }
     this.fishG = new THREE.Group(); this.rig.add(this.fishG);
     this.rig.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = false; } });
-    this.packets = {};
     // state
     this.shown = 'none'; this.lowerK = 1; this.sway = new THREE.Vector2(); this.runK = 0; this.airY = 0; this.landT = 1;
     this.wasGrounded = true; this.crankA = 0; this.bend = 0; this.offK = 1; this.offX = 0.05;
@@ -275,10 +189,9 @@ export class ViewModel {
   }
   // start fully lowered so the hands rise into view (entering first person)
   drop() { this.lowerK = 1; }
-  setSeed(key, icon) {
-    if (!this.packets[key]) this.packets[key] = packetTexture(icon);
-    const m = this.M.packet;
-    if (m.map !== this.packets[key]) { m.map = this.packets[key]; m.needsUpdate = true; }
+  setSeed(key) {
+    const m = this.T.seeds.icon.material, t = cropIconNow(key);
+    if (t && m.map !== t) { m.map = t; m.needsUpdate = true; }
   }
   // the caught fish, presented with both hands
   holdFish(wrap) {

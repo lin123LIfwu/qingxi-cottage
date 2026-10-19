@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GeoBuilder } from '../util/geo.js';
 import { clamp, lerp, smoothstep, damp, dampAngle } from '../util/math.js';
+import { toolModel, cropIconNow } from '../assets/models.js';
 
 const r6 = (x, z) => Math.pow(x ** 6 + z ** 6, 1 / 6);
 const PLAY_R = 82;
@@ -116,40 +117,35 @@ export class Player {
       hp.add(leg);
       this.legs.push({ hp, s });
     }
-    // tools
+    // tools: the Blender models (src/assets), turned from their own frame (grip at the origin,
+    // handle +Y, working end -Z) into this hand's frame (-Y runs down the arm, +Z is forward)
     this.tools = {};
     const hand = this.arms[1].hand;
-    const toolMat = M;
-    const hoe = part(B => {
-      B.add(new THREE.CylinderGeometry(0.022, 0.025, 1.0, 7), { pos: [0, -0.35, 0], color: '#a8784a' });
-      B.add(new THREE.BoxGeometry(0.18, 0.04, 0.15), { pos: [0, -0.86, 0.06], rot: [0.3, 0, 0], color: '#9aa3a8' });
-      B.add(new THREE.BoxGeometry(0.06, 0.06, 0.06), { pos: [0, -0.84, 0], color: '#5a5a5a' });
-    }, toolMat);
-    const can = part(B => {
-      B.add(new THREE.CylinderGeometry(0.11, 0.12, 0.2, 14), { pos: [0, -0.08, 0.06], rot: [Math.PI / 2, 0, 0], color: '#5aa59a' });
-      B.add(new THREE.CylinderGeometry(0.115, 0.115, 0.02, 14), { pos: [0, -0.08, 0.17], rot: [Math.PI / 2, 0, 0], color: '#3f857b' });
-      B.add(new THREE.CylinderGeometry(0.018, 0.026, 0.3, 7), { pos: [0, -0.02, 0.29], rot: [Math.PI / 2 - 0.7, 0, 0], color: '#5aa59a' });
-      B.add(new THREE.CylinderGeometry(0.04, 0.025, 0.04, 8), { pos: [0, 0.08, 0.4], rot: [Math.PI / 2 - 0.7, 0, 0], color: '#3f857b' });
-      B.add(new THREE.TorusGeometry(0.07, 0.014, 5, 10, Math.PI), { pos: [0, 0.0, 0.0], rot: [0, Math.PI / 2, 0], color: '#3f857b' });
-    }, toolMat);
-    const rod = part(B => {
-      B.add(new THREE.CylinderGeometry(0.008, 0.022, 1.7, 6), { pos: [0, -0.75, 0], color: '#c79a5b', colorFn: (c, x, y) => { if (y > -0.2) c.set('#6b4a2c'); } });
-      B.add(new THREE.CylinderGeometry(0.04, 0.04, 0.035, 10), { pos: [0.04, -0.12, 0], rot: [0, 0, Math.PI / 2], color: '#4a4f57' });
-    }, toolMat);
-    const rodTip = new THREE.Object3D(); rodTip.position.set(0, -1.6, 0); rod.add(rodTip); this.rodTip = rodTip;
-    const seeds = part(B => {
-      B.add(new THREE.SphereGeometry(0.09, 10, 8), { pos: [0, -0.06, 0.03], scale: [1, 1.15, 0.9], color: '#d8c39a' });
-      B.add(new THREE.CylinderGeometry(0.03, 0.05, 0.05, 8), { pos: [0, 0.05, 0.03], color: '#b89a6a' });
-      B.add(new THREE.BoxGeometry(0.06, 0.05, 0.01), { pos: [0, -0.05, 0.11], color: '#6aa84f' });
-    }, toolMat);
+    const wrap = (key, rx, ry, rz, pos) => {
+      const w = new THREE.Group(), m = toolModel(key);
+      m.rotation.set(rx, ry, rz, 'XYZ'); if (pos) m.position.set(...pos);
+      w.add(m); w.userData.model = m; return w;
+    };
+    const hoe = wrap('hoe', Math.PI, 0, 0);
+    const can = wrap('can', 0, Math.PI, 0);
+    const rod = wrap('rod', 0, 0, Math.PI);
+    const seeds = wrap('packet', 0, 0, 0, [0, -0.02, 0.05]);
     const fish = new THREE.Group();
     for (const [k, m] of Object.entries({ hoe, can, rod, seeds, fish })) { m.visible = false; hand.add(m); this.tools[k] = m; }
-    const spout = new THREE.Object3D(); spout.position.set(0, 0.09, 0.42); can.add(spout); this.spout = spout;
+    this.rodTip = rod.getObjectByName('Tip');
+    this.rodSegs = ['Seg1', 'Seg2', 'Seg3'].map(n => rod.getObjectByName(n));
+    this.spout = can.getObjectByName('Spout');
+    let icon = null; seeds.getObjectByName('Icon').traverse(o => { if (!icon && o.isMesh) icon = o; });
+    icon.material = icon.material.clone(); this.packetIcon = icon;
     this.canMesh = can;
     root.traverse(o => { if (o.isMesh) o.castShadow = true; });
     // blob shadow-less contact darkening: not needed (real shadows)
   }
 
+  setSeed(key) {
+    const m = this.packetIcon && this.packetIcon.material, t = cropIconNow(key);
+    if (m && t && m.map !== t) { m.map = t; m.needsUpdate = true; }
+  }
   setTool(t) {
     this.tool = t;
     for (const k in this.tools) this.tools[k].visible = (k === t) && k !== 'fish';
@@ -366,6 +362,10 @@ export class Player {
     this.head.rotation.x = lerp(this.head.rotation.x, headRX, r);
     this.head.rotation.y = lerp(this.head.rotation.y, headRY, r);
     if (toolRot) for (const k in this.tools) { const m = this.tools[k]; m.rotation.x = lerp(m.rotation.x, toolRot[0], r); }
+    // the bamboo blank bends at its ferrules while a fish pulls
+    const bend = a === 'fishing' ? (this.rodBend || 0) : 0;
+    this.rodK = lerp(this.rodK || 0, bend, r);
+    this.rodSegs[0].rotation.x = -this.rodK * 0.06; this.rodSegs[1].rotation.x = -this.rodK * 0.16; this.rodSegs[2].rotation.x = -this.rodK * 0.3;
     // fish model held overhead
     this.tools.fish.rotation.set(0, 0, Math.PI / 2);
     // breathing & blink
