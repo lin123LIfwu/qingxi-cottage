@@ -1,31 +1,10 @@
 import * as THREE from 'three';
-import { GeoBuilder } from '../util/geo.js';
-import { clamp, lerp, smoothstep, damp, dampAngle } from '../util/math.js';
-import { toolModel, cropIconNow } from '../assets/models.js';
+import { clamp, lerp, damp, dampAngle } from '../util/math.js';
+import { toolModel, farmerModel, cropIconNow } from '../assets/models.js';
+import { Human } from './human.js';
 
 const r6 = (x, z) => Math.pow(x ** 6 + z ** 6, 1 / 6);
 const PLAY_R = 82;
-
-function rimPatch(mat, U) {
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uRim = U.uSkyAmbient;
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uRim;')
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-{ float rim = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);
-  totalEmissiveRadiance += (uRim * 0.5 + vec3(0.04)) * rim * 0.55 * diffuseColor.rgb * 2.0; }`);
-  };
-  mat.customProgramCacheKey = () => 'rim';
-  return mat;
-}
-
-function part(builderFn, mat) {
-  const B = new GeoBuilder();
-  builderFn(B);
-  const m = new THREE.Mesh(B.build(), mat);
-  m.castShadow = true; m.receiveShadow = true;
-  return m;
-}
 
 export class Player {
   constructor(T, colliders, U) {
@@ -33,113 +12,39 @@ export class Player {
     this.pos = new THREE.Vector3(); this.vel = new THREE.Vector3(); this.vy = 0;
     this.yaw = 0; this.grounded = true; this.walkPhase = 0; this.speed = 0;
     this.action = null; this.actionT = 0; this.actionDur = 0; this.actionCb = null; this.actionFired = false;
-    this.pose = 'none'; this.tool = 'none'; this.blink = 0; this.blinkT = 2;
-    this.waterDepth = 0; this.surface = 'grass'; this.stepAcc = 0;
+    this.pose = 'none'; this.tool = 'none';
+    this.waterDepth = 0; this.surface = 'grass';
     this.onStep = null; this.onLand = null;
-    this.mat = rimPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0 }), U);
-    this.eyeMat = new THREE.MeshStandardMaterial({ color: '#1f1a17', roughness: 0.15, metalness: 0 });
+    // fishing state mirrored in by main.js / fishing.js
+    this.charge = 0; this.lineOut = false; this.reelK = 0; this.rodBend = 0; this.rodK = 0;
+    this.yawPrev = null; this.yawRate = 0;
     this.build();
   }
 
+  // The farmer: a skinned, MakeHuman-based character (src/assets/farmer.glb) driven by the
+  // procedural animator in human.js. The tools ride in the right hand, the caught fish between
+  // both hands.
   build() {
-    const M = this.mat;
-    const skin = '#f7d2b1', shirt = '#f6efe0', denim = '#4f7fc0', boot = '#7a4e2e', hair = '#6b3f22', straw = '#ecc66e';
     const root = new THREE.Group(); root.name = 'player'; this.root = root;
-    const hips = new THREE.Group(); hips.position.y = 0.5; root.add(hips); this.hips = hips;
-    // torso
-    const torso = part(B => {
-      B.add(new THREE.SphereGeometry(1, 14, 10), { pos: [0, 0.2, 0], scale: [0.25, 0.27, 0.2], color: shirt });
-      B.add(new THREE.SphereGeometry(1, 14, 10), { pos: [0, 0.02, 0], scale: [0.27, 0.2, 0.215], color: denim });
-      B.add(new THREE.BoxGeometry(0.26, 0.2, 0.06), { pos: [0, 0.2, 0.165], rot: [-0.12, 0, 0], color: denim });
-      B.add(new THREE.BoxGeometry(0.1, 0.07, 0.02), { pos: [0, 0.2, 0.2], rot: [-0.12, 0, 0], color: '#3f6aa6' });
-      for (const s of [-1, 1]) {
-        B.add(new THREE.BoxGeometry(0.05, 0.3, 0.035), { pos: [s * 0.1, 0.3, 0.15], rot: [-0.35, 0, 0], color: denim });
-        B.add(new THREE.BoxGeometry(0.05, 0.3, 0.035), { pos: [s * 0.1, 0.3, -0.15], rot: [0.35, 0, 0], color: denim });
-        B.add(new THREE.SphereGeometry(0.022, 6, 4), { pos: [s * 0.1, 0.28, 0.2], color: '#f2c94c' });
-      }
-      B.add(new THREE.TorusGeometry(0.1, 0.035, 6, 14), { pos: [0, 0.43, 0.01], rot: [Math.PI / 2 + 0.15, 0, 0], color: '#d9534a' });
-      B.add(new THREE.ConeGeometry(0.05, 0.09, 6), { pos: [0.02, 0.37, 0.12], rot: [0.4, 0, 0.3], color: '#d9534a' });
-    }, M);
-    hips.add(torso); this.torso = torso;
-    // head
-    const head = new THREE.Group(); head.position.y = 0.47; hips.add(head); this.head = head;
-    const face = part(B => {
-      B.add(new THREE.SphereGeometry(0.27, 20, 16), { pos: [0, 0.2, 0], scale: [1, 0.95, 0.95], color: skin });
-      B.add(new THREE.SphereGeometry(0.28, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), { pos: [0, 0.215, -0.02], rot: [-0.35, 0, 0], color: hair });
-      for (let i = 0; i < 5; i++) B.add(new THREE.SphereGeometry(0.075, 8, 6), { pos: [-0.16 + i * 0.08, 0.36 - Math.abs(i - 2) * 0.012, 0.17], scale: [1, 0.7, 0.6], color: hair });
-      for (const s of [-1, 1]) {
-        B.add(new THREE.SphereGeometry(0.05, 8, 6), { pos: [s * 0.265, 0.18, 0], scale: [0.5, 1, 0.8], color: skin });
-        B.add(new THREE.SphereGeometry(0.045, 10, 6), { pos: [s * 0.15, 0.12, 0.215], scale: [1, 0.55, 0.3], color: '#f4a7a0' });
-      }
-      B.add(new THREE.SphereGeometry(0.022, 8, 6), { pos: [0, 0.155, 0.26], color: '#efb895' });
-      B.add(new THREE.TorusGeometry(0.035, 0.01, 4, 10, Math.PI), { pos: [0, 0.095, 0.245], rot: [0.25, 0, Math.PI], color: '#8a3b2e' });
-    }, M);
-    head.add(face);
-    // eyes
-    this.eyes = [];
-    for (const s of [-1, 1]) {
-      const e = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), this.eyeMat);
-      e.position.set(s * 0.095, 0.205, 0.235); e.scale.set(0.85, 1.15, 0.5);
-      head.add(e); this.eyes.push(e);
-      const hl = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 4), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
-      hl.position.set(s * 0.095 + 0.012, 0.222, 0.255); head.add(hl); this.eyes.push(hl);
-    }
-    // hat
-    const hat = part(B => {
-      B.add(new THREE.CylinderGeometry(0.43, 0.45, 0.03, 28), { pos: [0, 0, 0], color: straw, colorFn: (c, x, y, z) => c.multiplyScalar(0.88 + 0.14 * Math.sin(Math.hypot(x, z) * 90)) });
-      B.add(new THREE.CylinderGeometry(0.19, 0.225, 0.18, 22), { pos: [0, 0.1, 0], color: straw, colorFn: (c, x, y) => c.multiplyScalar(0.88 + 0.12 * Math.sin(y * 120)) });
-      B.add(new THREE.SphereGeometry(0.19, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), { pos: [0, 0.19, 0], scale: [1, 0.35, 1], color: straw });
-      B.add(new THREE.CylinderGeometry(0.228, 0.228, 0.05, 22), { pos: [0, 0.04, 0], color: '#d9534a' });
-    }, M);
-    hat.position.set(0, 0.39, -0.02); hat.rotation.x = -0.18; head.add(hat); this.hat = hat;
-    // arms
-    this.arms = [];
-    for (const s of [-1, 1]) {
-      const sh = new THREE.Group(); sh.position.set(s * 0.25, 0.3, 0); hips.add(sh);
-      const arm = part(B => {
-        B.add(new THREE.SphereGeometry(1, 10, 8), { pos: [0, -0.07, 0], scale: [0.075, 0.1, 0.075], color: shirt });
-        B.add(new THREE.CylinderGeometry(0.055, 0.06, 0.2, 10), { pos: [0, -0.18, 0], color: shirt });
-        B.add(new THREE.SphereGeometry(0.062, 10, 8), { pos: [0, -0.3, 0], color: skin });
-      }, M);
-      sh.add(arm);
-      const hand = new THREE.Group(); hand.position.set(0, -0.3, 0); sh.add(hand);
-      this.arms.push({ sh, hand, s });
-    }
-    // legs
-    this.legs = [];
-    for (const s of [-1, 1]) {
-      const hp = new THREE.Group(); hp.position.set(s * 0.11, 0.5, 0); root.add(hp);
-      const leg = part(B => {
-        B.add(new THREE.CylinderGeometry(0.075, 0.07, 0.3, 10), { pos: [0, -0.17, 0], color: denim });
-        B.add(new THREE.SphereGeometry(1, 10, 8), { pos: [0, -0.42, 0.035], scale: [0.085, 0.07, 0.12], color: boot });
-        B.add(new THREE.CylinderGeometry(0.08, 0.085, 0.08, 10), { pos: [0, -0.36, 0], color: boot });
-      }, M);
-      hp.add(leg);
-      this.legs.push({ hp, s });
-    }
-    // tools: the Blender models (src/assets), turned from their own frame (grip at the origin,
-    // handle +Y, working end -Z) into this hand's frame (-Y runs down the arm, +Z is forward)
+    const body = farmerModel(); root.add(body); this.body = body;
+    const h = this.human = new Human(body);
+    h.onStep = (k, run) => { if (this.grounded && this.speed > 0.3 && this.onStep) this.onStep(this.surface, run); };
     this.tools = {};
-    const hand = this.arms[1].hand;
-    const wrap = (key, rx, ry, rz, pos) => {
-      const w = new THREE.Group(), m = toolModel(key);
-      m.rotation.set(rx, ry, rz, 'XYZ'); if (pos) m.position.set(...pos);
-      w.add(m); w.userData.model = m; return w;
-    };
-    const hoe = wrap('hoe', Math.PI, 0, 0);
-    const can = wrap('can', 0, Math.PI, 0);
-    const rod = wrap('rod', 0, 0, Math.PI);
-    const seeds = wrap('packet', 0, 0, 0, [0, -0.02, 0.05]);
-    const fish = new THREE.Group();
-    for (const [k, m] of Object.entries({ hoe, can, rod, seeds, fish })) { m.visible = false; hand.add(m); this.tools[k] = m; }
+    for (const [k, key] of [['hoe', 'hoe'], ['can', 'can'], ['rod', 'rod'], ['seeds', 'packet']]) {
+      const w = h.holdTool(k, toolModel(key)); w.visible = false; this.tools[k] = w;
+    }
+    this.tools.fish = h.fishHolder; h.fishHolder.visible = false;
+    const rod = this.tools.rod, can = this.tools.can, seeds = this.tools.seeds;
     this.rodTip = rod.getObjectByName('Tip');
     this.rodSegs = ['Seg1', 'Seg2', 'Seg3'].map(n => rod.getObjectByName(n));
     this.spout = can.getObjectByName('Spout');
     let icon = null; seeds.getObjectByName('Icon').traverse(o => { if (!icon && o.isMesh) icon = o; });
     icon.material = icon.material.clone(); this.packetIcon = icon;
     this.canMesh = can;
-    root.traverse(o => { if (o.isMesh) o.castShadow = true; });
-    // blob shadow-less contact darkening: not needed (real shadows)
+    for (const k of ['hoe', 'can', 'rod', 'seeds']) this.tools[k].traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    body.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
+    // settle into the idle pose before the first frame is drawn
+    h.update(0, this.animState(0));
   }
 
   setSeed(key) {
@@ -164,17 +69,23 @@ export class Player {
     if (inVM) { f.visible = false; vm.holdFish(m); }
     else { f.add(m); f.visible = true; }
   }
-  // first person: hide the body from the camera (it keeps casting its shadow) and hand the
-  // tool-tip / spout / held-fish queries over to the view model
+  // first person: hide the body from the camera but keep its shadow (a per-material clone that
+  // writes neither colour nor depth still renders into the shadow map, alpha-tested hair and all),
+  // and hand the tool-tip / spout / held-fish queries over to the view model
   setFirstPerson(on, vm) {
     if (vm) this.vm = vm;
     if (!!this.fpActive === on) return;
     this.fpActive = on;
     this.placeHeldFish();
-    if (!this.hideMat) this.hideMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    if (!this.hideMats) this.hideMats = new Map();
+    const hide = (m) => {
+      let h = this.hideMats.get(m);
+      if (!h) { h = m.clone(); h.colorWrite = false; h.depthWrite = false; this.hideMats.set(m, h); }
+      return h;
+    };
     this.root.traverse(o => {
       if (!o.isMesh) return;
-      if (on) { if (!o.userData.mat0) { o.userData.mat0 = o.material; o.material = this.hideMat; } }
+      if (on) { if (!o.userData.mat0) { o.userData.mat0 = o.material; o.material = Array.isArray(o.material) ? o.material.map(hide) : hide(o.material); } }
       else if (o.userData.mat0) { o.material = o.userData.mat0; delete o.userData.mat0; }
     });
   }
@@ -264,12 +175,7 @@ export class Player {
     this.waterDepth = (!deck && lv > -40) ? Math.max(0, lv - cur.y) : 0;
     this.waterLevel = lv;
     this.surface = deck ? 'wood' : this.waterDepth > 0.05 ? 'water' : (T.pathAt(cur.x, cur.z) > 0.4 ? 'path' : 'grass');
-    // steps
-    if (this.grounded && this.speed > 0.5) {
-      this.stepAcc += this.speed * dt;
-      const stride = input.run ? 0.95 : 0.7;
-      if (this.stepAcc > stride) { this.stepAcc = 0; this.onStep && this.onStep(this.surface, input.run); }
-    }
+    // footsteps come from the animator's foot plants (human.onStep)
     // ---- action timeline ----
     if (this.action) {
       this.actionT += dt / this.actionDur;
@@ -281,100 +187,43 @@ export class Player {
         done && done(name);
       }
     }
-    this.animate(dt, t, input);
+    this.animate(dt);
     this.root.position.copy(cur);
     this.root.rotation.y = this.yaw;
     this.U.uPlayerPos.value.copy(cur);
   }
 
-  animate(dt, t, input) {
-    const sp = this.speed, run = sp > 4.5;
-    const k = smoothstep(0.2, 2.5, sp);
-    this.walkPhase += dt * (run ? 11.5 : 8.6) * clamp(sp / (run ? 6 : 3.4), 0.3, 1.25);
-    const ph = this.walkPhase;
-    const L = this.legs, A = this.arms;
-    const air = !this.grounded;
-    // defaults
-    let hipsY = 0.5 + Math.abs(Math.sin(ph)) * 0.05 * k + Math.sin(t * 2.2) * 0.006 * (1 - k);
-    let hipsRX = (run ? 0.2 : 0.06) * k, hipsRY = Math.sin(ph) * 0.12 * k;
-    let legA = Math.sin(ph) * (run ? 0.95 : 0.7) * k;
-    let armL = { x: -legA * 0.8, z: -0.12 }, armR = { x: legA * 0.8, z: 0.12 };
-    let headRX = -hipsRX * 0.6, headRY = 0;
-    let toolRot = null;
-    if (air) { legA = 0; L[0].hp.rotation.x = -0.6; L[1].hp.rotation.x = 0.3; armL = { x: -2.2, z: -0.4 }; armR = { x: -2.2, z: 0.4 }; }
-    // tool carry pose
-    const T = this.tool;
-    if (!this.action && !air) {
-      if (T === 'hoe') { armR = { x: -0.45 + legA * 0.2, z: 0.08 }; toolRot = [-2.69, 0, 0]; }
-      else if (T === 'can') { armR = { x: -0.25 + legA * 0.3, z: 0.1 }; toolRot = [0.25, 0, 0]; }
-      else if (T === 'rod') { armR = { x: -0.55 + legA * 0.15, z: 0.1 }; toolRot = [-1.55, 0, 0]; }
-      else if (T === 'seeds') { armR = { x: -0.5 + legA * 0.3, z: 0.1 }; toolRot = [0.4, 0, 0]; }
-    }
-    // actions
-    const a = this.action, u = clamp(this.actionT, 0, 1);
-    if (a === 'hoe') {
-      const up = smoothstep(0, 0.42, u), down = smoothstep(0.42, 0.6, u), back = smoothstep(0.8, 1, u);
-      const ax = lerp(lerp(-0.45, -2.9, up), -1.05, down);
-      armR = { x: lerp(ax, -0.45, back), z: 0.05 }; armL = { x: lerp(ax, 0, back), z: -0.05 };
-      toolRot = [lerp(lerp(lerp(-2.69, -1.3, up), 0.35, down), -2.69, back), 0, 0];
-      hipsRX = lerp(-0.1 * up, 0.3, down) * (1 - back); hipsY -= 0.06 * down * (1 - back);
-      headRX = 0.2 * down;
-    } else if (a === 'water') {
-      const tilt = smoothstep(0.1, 0.3, u) * (1 - smoothstep(0.85, 1, u));
-      armR = { x: lerp(-0.25, -1.0, tilt), z: 0.12 }; toolRot = [lerp(0.25, 1.35, tilt), 0, 0];
-      hipsRX = 0.12 * tilt; headRX = 0.35 * tilt;
-    } else if (a === 'plant' || a === 'harvest') {
-      const dn = smoothstep(0, 0.35, u) * (1 - smoothstep(0.7, 1, u));
-      hipsY -= 0.2 * dn; hipsRX = 0.55 * dn; headRX = 0.2 * dn;
-      L[0].hp.rotation.x = -0.9 * dn; L[1].hp.rotation.x = -0.9 * dn;
-      armR = { x: lerp(0, -1.2, dn), z: 0.1 }; armL = { x: lerp(0, -0.9, dn), z: -0.1 };
-      if (a === 'harvest') { const pull = smoothstep(0.45, 0.65, u) * (1 - smoothstep(0.8, 1, u)); armR.x += 0.4 * pull; armL.x += 0.4 * pull; hipsRX -= 0.25 * pull; }
-      toolRot = [0.6, 0, 0];
-    } else if (a === 'cast') {
-      const back = smoothstep(0, 0.45, u), fwd = smoothstep(0.5, 0.65, u);
-      armR = { x: lerp(lerp(-0.55, -2.9, back), -1.1, fwd), z: 0.15 }; armL = { x: lerp(-0.3, -0.9, fwd), z: -0.1 };
-      toolRot = [lerp(lerp(-1.55, -1.17, back), -0.99, fwd), 0, 0];
-      hipsRY = lerp(0.3 * back, -0.15, fwd); hipsRX = 0.15 * fwd;
-    } else if (a === 'fishing') {
-      const w = this.reelK || 0;
-      armR = { x: -1.05 + Math.sin(t * 14) * 0.03 * w, z: 0.15 }; armL = { x: -0.95 + Math.sin(t * 18) * 0.05 * w, z: -0.25 };
-      toolRot = [-1.05 + (this.rodBend || 0) * 0.35, 0, 0];
-      hipsRX = -0.06 - 0.12 * w; hipsRY = Math.sin(t * 9) * 0.03 * w;
-    } else if (a === 'showfish') {
-      const up = smoothstep(0, 0.2, u);
-      armR = { x: lerp(0, -2.9, up), z: 0.25 }; armL = { x: lerp(0, -2.9, up), z: -0.25 };
-      headRX = -0.25 * up; hipsY += 0.03 * Math.sin(u * 20) * up;
-    } else if (a === 'sleep') {
-      hipsRX = 0.1; headRX = 0.4;
-    } else if (a === 'refill') {
-      const dn = smoothstep(0, 0.3, u) * (1 - smoothstep(0.7, 1, u));
-      hipsY -= 0.15 * dn; hipsRX = 0.5 * dn; armR = { x: -1.3 * dn - 0.25, z: 0.12 }; toolRot = [0.25 + 1.2 * dn, 0, 0];
-      L[0].hp.rotation.x = -0.6 * dn; L[1].hp.rotation.x = -0.6 * dn;
-    }
-    const legsFree = !a || a === 'fishing' || a === 'cast' || a === 'hoe' || a === 'water' || a === 'showfish';
-    if (!air && legsFree) { L[0].hp.rotation.x = legA; L[1].hp.rotation.x = -legA; }
-    const r = 1 - Math.exp(-dt * 18);
-    this.hips.position.y = lerp(this.hips.position.y, hipsY, r);
-    this.hips.rotation.x = lerp(this.hips.rotation.x, hipsRX, r);
-    this.hips.rotation.y = lerp(this.hips.rotation.y, hipsRY, r);
-    A[0].sh.rotation.x = lerp(A[0].sh.rotation.x, armL.x, r); A[0].sh.rotation.z = lerp(A[0].sh.rotation.z, armL.z - 0.08, r);
-    A[1].sh.rotation.x = lerp(A[1].sh.rotation.x, armR.x, r); A[1].sh.rotation.z = lerp(A[1].sh.rotation.z, armR.z + 0.08, r);
-    this.head.rotation.x = lerp(this.head.rotation.x, headRX, r);
-    this.head.rotation.y = lerp(this.head.rotation.y, headRY, r);
-    if (toolRot) for (const k in this.tools) { const m = this.tools[k]; m.rotation.x = lerp(m.rotation.x, toolRot[0], r); }
+  // what the animator needs to know this frame (velocity in character space: +Z = facing)
+  animState(dt) {
+    const yaw = this.yaw, c = Math.cos(yaw), s = Math.sin(yaw), vx = this.vel.x, vz = this.vel.z;
+    if (this.yawPrev === null) this.yawPrev = yaw;
+    let dy = yaw - this.yawPrev; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); this.yawPrev = yaw;
+    this.yawRate = dt > 1e-4 ? clamp(dy / dt, -12, 12) : 0;
+    const st = this._st || (this._st = {
+      // ground height under a foot (character space), relative to the root
+      ground: (lx, lz) => {
+        const p = this.pos, cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+        return this.T.groundHeight(p.x + cy * lx + sy * lz, p.z - sy * lx + cy * lz) - p.y;
+      },
+    });
+    st.speed = this.speed; st.vx = c * vx - s * vz; st.vz = s * vx + c * vz;
+    st.grounded = this.grounded; st.vy = this.vy; st.yawRate = this.yawRate;
+    st.wade = clamp(this.waterDepth / 0.75, 0, 1);
+    st.action = this.action; st.u = clamp(this.actionT, 0, 1); st.tool = this.tool || 'none';
+    st.charge = this.charge || 0; st.lineOut = !!this.lineOut; st.reelK = this.reelK || 0; st.rodBend = this.rodBend || 0;
+    const fw = this.tools && this.tools.fish.children[0], fm = fw && fw.children[0];
+    st.fishSize = fm ? fm.scale.x : 0.3;
+    return st;
+  }
+
+  animate(dt) {
+    const h = this.human;
+    h.update(dt, this.animState(dt));
+    this.walkPhase = h.walkPhase;
     // the bamboo blank bends at its ferrules while a fish pulls
-    const bend = a === 'fishing' ? (this.rodBend || 0) : 0;
-    this.rodK = lerp(this.rodK || 0, bend, r);
+    const bend = this.action === 'fishing' ? (this.rodBend || 0) : 0;
+    this.rodK = damp(this.rodK, bend, 12, dt);
     this.rodSegs[0].rotation.x = -this.rodK * 0.06; this.rodSegs[1].rotation.x = -this.rodK * 0.16; this.rodSegs[2].rotation.x = -this.rodK * 0.3;
-    // fish model held overhead
-    this.tools.fish.rotation.set(0, 0, Math.PI / 2);
-    // breathing & blink
-    this.torso.scale.y = 1 + Math.sin(t * 2.2) * 0.012;
-    this.blinkT -= dt;
-    if (this.blinkT < 0) { this.blink = 0.14; this.blinkT = 2 + Math.random() * 3.5; }
-    this.blink -= dt;
-    const ey = this.blink > 0 ? 0.12 : 1.15;
-    this.eyes[0].scale.y = ey; this.eyes[2].scale.y = ey; this.eyes[1].visible = this.eyes[3].visible = this.blink <= 0;
   }
 
   // world positions helpers

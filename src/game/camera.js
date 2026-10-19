@@ -110,7 +110,7 @@ export class CameraRig {
     }
     const snap = !this.inited;
     // ---- third person ----
-    const tgt = _p.set(focus.x, focus.y + 1.15, focus.z);
+    const tgt = _p.set(focus.x, focus.y + 1.32, focus.z);
     if (snap) { this.target.copy(tgt); }
     this.target.x = damp(this.target.x, tgt.x, 10, dt); this.target.z = damp(this.target.z, tgt.z, 10, dt);
     this.target.y = damp(this.target.y, tgt.y, 6, dt);

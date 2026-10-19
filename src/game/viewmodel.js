@@ -11,7 +11,8 @@ import { toolModel, cropIconNow } from '../assets/models.js';
 
 const _e = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _c = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
-const SKIN = '#ebb793', SKIN_D = '#d99c7b', SHIRT = '#efe4cf', CUFF = '#d8c7a6';
+// matched to the third-person character's skin texture (MakeHuman young_asian_male skin, sRGB)
+const SKIN = '#d6aa8c', SKIN_D = '#c39074';
 
 export function vmPatch(mat, U) {
   mat.onBeforeCompile = (sh) => {
@@ -70,14 +71,12 @@ function handGeometry() {
 const WRIST = new THREE.Vector3(0.018, -0.026, 0.075);
 
 function forearmGeometry() {
-  // unit length along +Y: y=0 at the wrist, y=1 at the elbow
-  // rolled-up sleeves: bare forearm from the wrist, then the folded cuff and the shirt sleeve
+  // unit length along +Y: y=0 at the wrist, y=1 at the elbow. Short-sleeved tee: bare skin all
+  // the way, a little fuller over the forearm muscles, slightly darker on the inner side
   return geo(B => {
-    B.add(new THREE.CylinderGeometry(0.043, 0.028, 0.6, 16, 3, true), { pos: [0, 0.3, 0], color: SKIN,
-      warp: (x, y, z) => { const k = 1 + 0.12 * Math.sin(Math.min(1, y / 0.6) * Math.PI) * (x > 0 ? 1 : 0.6); return [x * k, y, z * k * 0.9]; } });
-    B.add(new THREE.CylinderGeometry(0.053, 0.05, 0.13, 16, 2), { pos: [0, 0.63, 0], color: CUFF,
-      colorFn: (c, x, y) => c.multiplyScalar(0.9 + 0.1 * Math.sin(y * 60)) });
-    B.add(new THREE.CylinderGeometry(0.056, 0.052, 0.32, 16, 1, true), { pos: [0, 0.86, 0], color: SHIRT });
+    B.add(new THREE.CylinderGeometry(0.047, 0.028, 1.04, 18, 8, true), { pos: [0, 0.52, 0], color: SKIN,
+      warp: (x, y, z) => { const u = clamp(y / 1.04, 0, 1), k = 1 + 0.13 * Math.sin(Math.min(1, u / 0.75) * Math.PI) * (x > 0 ? 1 : 0.6); return [x * k, y, z * k * 0.9]; },
+      colorFn: (c, x) => { if (x < 0) c.lerp(_c.set(SKIN_D), 0.2); } });
   });
 }
 
@@ -160,7 +159,7 @@ export class ViewModel {
     // hands & forearms
     const hg = handGeometry(), fg = forearmGeometry();
     this.handR = new THREE.Mesh(hg, M.skin); this.handL = new THREE.Mesh(hg, M.skin); this.handL.scale.x = -1;
-    this.armR = new THREE.Mesh(fg, M.cloth); this.armL = new THREE.Mesh(fg, M.cloth);
+    this.armR = new THREE.Mesh(fg, M.skin); this.armL = new THREE.Mesh(fg, M.skin);
     for (const o of [this.handR, this.handL, this.armR, this.armL]) this.rig.add(o);
     // tools
     this.toolG = new THREE.Group(); this.rig.add(this.toolG);

@@ -645,6 +645,11 @@ class Game {
       // first person: the body turns with the view (but stays put while a line is out)
       face: this.mode === 'play' && this.rig.fp && !this.fishing.active ? this.rig.yaw + Math.PI : null,
     };
+    // the animator follows the fishing state: rod wind-up keyed on the power meter, rod held out
+    // over the water while the line is out
+    const FS = this.fishing.state;
+    p.charge = FS === 'charge' ? Math.max(0.001, this.fishing.power) : 0;
+    p.lineOut = FS === 'cast' || FS === 'wait' || FS === 'bite' || FS === 'reel' || FS === 'retrieve';
     p.update(this.mode === 'play' && !paused ? rdt : (this.mode === 'title' ? rdt : 0), input, this.rig.yaw, t);
     // wading ripples
     if (p.waterDepth > 0.05) {
