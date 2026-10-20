@@ -3,7 +3,15 @@
 一个用 **three.js** 制作的轻松休闲田园小游戏：在小河与池塘环绕的山谷里，经营自己的小木屋和菜园，开垦、播种、浇水、收获，去池塘和小河钓鱼，在小树林里闲逛。
 
 ## 直接游玩
-打开 `dist/青溪小筑.html`（单文件，已内联全部代码，可离线运行）。推荐使用电脑上的新版 Chrome / Edge / Firefox / Safari（需要 WebGL2），键盘 + 鼠标操作。
+打开 `dist/青溪小筑.html`（单文件，已内联全部代码和资源，可离线运行）。推荐使用电脑上的新版 Chrome / Edge / Firefox / Safari（需要 WebGL2），键盘 + 鼠标操作。
+
+这个文件有 3 MB 多，GitHub 网页接口传不了这么大的文件，所以仓库里存的是它的 base64 文本分段（`dist/青溪小筑.html.b64.part1…5`）。下载仓库后在 `models/` 文件夹里运行：
+
+```bash
+python3 decode.py      # Windows 上用 python decode.py
+```
+
+就会还原出可以直接打开的 `dist/青溪小筑.html`，同时还原 Blender 工程（`models/blend/*.blend`）和 GLB 模型（`models/glb/*.glb`），并自动校验 md5。也可以用 `npm install && npm run build` 自己构建出同一个文件。
 
 也能放在 Notion 等网页预览框 / iframe 里直接打开：游戏不依赖 WebAssembly、Worker 或任何外部网络资源，在禁止 `unsafe-eval` / WebAssembly 的严格内容安全策略（CSP）下也能运行；如果所在环境不允许本地存储，照样可以玩，只是不会保存进度。
 
@@ -70,6 +78,7 @@ src/
   audio/audio.js       WebAudio 程序化音效、环境声与五声音阶背景音乐
   ui/                  HUD、小地图、面板、图标与样式
 models/                Blender 模型源文件（工具和人物的 .blend / .glb / 生成脚本），见 models/README.md
+dist/                  游戏单文件的 base64 分段（models/decode.py 还原，或 npm run build 重新构建）
 ```
 
 ## 版本快照（可随时回退）
@@ -91,3 +100,4 @@ models/                Blender 模型源文件（工具和人物的 .blend / .gl
 - **写实工具模型**：锄头、水壶、鱼竿、种子袋换成用 Blender 制作的写实模型（PBR 材质：木柄与锻铁锄头、烤漆铁皮水壶配黄铜莲蓬头、竹节竿身配软木握把和金属摇轮、印刷纸质种子袋），第一人称和第三人称手里拿的都是同一套模型；鱼竿的摇轮会随收线转动、竿梢随拉力弯曲，种子袋上的图案会随所选作物变化。模型源文件放在 `models/` 文件夹。
 - **写实人物**：主角换成写实比例的青年（身高约 1.75 m）：头戴沙色棉帆布渔夫帽，鼠尾草绿短袖 T 恤、牛仔裤、休闲鞋。人体来自 MakeHuman（CC0），在 Blender 里绑定 53 根骨骼的游戏骨架。动作全部实时程序化合成：走路 → 慢跑 → 快跑（Shift）平滑过渡、脚步贴合地形、待机呼吸和张望、跳跃落地缓冲、扛锄头 / 提水壶 / 握鱼竿 / 拿种子袋走动，锄地、浇水、装水、播种、收获、蓄力抛竿、摇轮收线、举起渔获。第一人称下看到的是同一个人的短袖手臂，地上照样有自己的影子。模型源文件在 `models/`（见 `models/character/README.md`）。
 - **兼容性修复**：在 Notion 等内嵌预览里打开时，因为页面的安全策略禁止 WebAssembly，模型解压失败导致“加载时出了点问题”。现在改用纯 JavaScript 解压模型（结果与原来的 WebAssembly 解码器逐字节一致，只多花几十毫秒），贴图直接从内存解码、不再经过 blob: 地址；在禁止本地存储的沙盒 iframe 里也能正常启动（只是不存档）。
+- **资源文件进仓库**：游戏单文件（3.3 MB）也以 base64 分段存进了仓库；`models/decode.py` 一次还原全部资源（游戏、5 个 Blender 工程、5 个 GLB），按 `models/checksums.md5` 校验，分段缺失或损坏会提示具体是哪个文件；新增 `models/encode.py` 用来重新生成分段。

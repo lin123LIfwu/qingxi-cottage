@@ -1,3 +1,6 @@
 node_modules/
-dist/
+# 构建 / decode.py 还原出来的游戏文件不进仓库，只提交 base64 分段
+dist/*
+!dist/*.b64
+!dist/*.b64.part*
 .DS_Store

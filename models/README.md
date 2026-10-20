@@ -25,25 +25,37 @@ models/
   character/            人物的生成脚本和说明（README.md）
   game_export/          工具 GLB → 游戏资源：压缩（Meshopt + WebP）并写成 src/assets/*.glb.js
   preview/              上面几张预览图
-  decode.py             把 .b64（含分段的 .b64.partN）还原成 .blend / .glb
+  decode.py             一键还原：.b64（含分段的 .b64.partN）→ .blend / .glb，以及游戏 ../dist/青溪小筑.html
+  encode.py             反过来：把文件编码成 base64 分段（每段 100 万字符）并更新 checksums.md5
+  checksums.md5         还原后用来校验的 md5
 ```
 
 ## 下载后先还原二进制文件
 
-GitHub 网页接口只能提交文本，所以 `.blend` 和 `.glb` 以 base64 文本存放（内容完全一致，只是编码不同）。下载仓库后在 `models/` 目录运行：
+GitHub 网页接口只能提交文本，单个文件也不能太大，所以 `.blend`、`.glb` 和游戏单文件都以 base64 文本存放（内容完全一致，只是编码不同），较大的拆成了几段。下载仓库后在 `models/` 目录运行：
 
 ```bash
-python3 decode.py
+python3 decode.py            # Windows 上用 python decode.py
+python3 decode.py game       # 只还原游戏；blend / glb 同理
 ```
 
-就会在旁边生成 `blend/hoe.blend`、`glb/hoe.glb`、`blend/farmer.blend`、`glb/farmer.glb` 等文件（分段文件会自动按顺序拼接），用 Blender 直接打开即可。
-不想装 Python 也可以用系统自带命令（分段文件要先拼接，见 [character/README.md](character/README.md)）：
+会还原出下面这些文件（分段自动按顺序拼接，并按 `checksums.md5` 校验；有分段缺失或损坏会提示是哪个文件，不会写出坏文件）：
 
-| 系统 | 命令 |
-|---|---|
-| Windows | `certutil -decode hoe.blend.b64 hoe.blend` |
-| macOS | `base64 -D -i hoe.blend.b64 -o hoe.blend` |
-| Linux | `base64 -d hoe.blend.b64 > hoe.blend` |
+| 文件 | 来源 | 打开方式 |
+|---|---|---|
+| `../dist/青溪小筑.html` | 5 段 | 双击用浏览器打开就能玩 |
+| `blend/hoe.blend` `can.blend` `rod.blend` `packet.blend` | 各 1 段 | Blender 4.5 |
+| `blend/farmer.blend` | 6 段 | Blender 4.5 |
+| `glb/hoe.glb` `can.glb` `rod.glb` `packet.glb` | 各 1 段 | 任意 glTF 查看器 / 引擎，也可导入 Blender |
+| `glb/farmer.glb` | 2 段 | three.js、Babylon.js、[glTF Viewer](https://gltf-viewer.donmccurdy.com) 等（用了 Meshopt 压缩，Blender 请直接打开 `farmer.blend`） |
+
+不想装 Python 也可以用系统自带命令：
+
+| 系统 | 单个文件 | 分段文件（先按 part1、part2 … 的顺序拼接） |
+|---|---|---|
+| Windows | `certutil -decode hoe.blend.b64 hoe.blend` | `copy /b farmer.glb.b64.part1+farmer.glb.b64.part2 farmer.glb.b64`，再 `certutil -decode farmer.glb.b64 farmer.glb` |
+| macOS | `base64 -D -i hoe.blend.b64 -o hoe.blend` | `cat farmer.glb.b64.part1 farmer.glb.b64.part2 \| base64 -D > farmer.glb` |
+| Linux | `base64 -d hoe.blend.b64 > hoe.blend` | `cat farmer.glb.b64.part1 farmer.glb.b64.part2 \| base64 -d > farmer.glb` |
 
 ## 通用约定
 

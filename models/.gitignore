@@ -4,3 +4,6 @@ game_export/node_modules/
 game_export/out/
 game_export/icons/
 *.blend1
+# decode.py 还原出来的二进制文件（仓库里只存 .b64 文本）
+blend/*.blend
+glb/*.glb
