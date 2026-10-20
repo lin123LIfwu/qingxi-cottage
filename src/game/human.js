@@ -15,13 +15,13 @@ const AX = v3(1, 0, 0), AY = v3(0, 1, 0), AZ = v3(0, 0, 1), DOWN = v3(0, -1, 0);
 const _e = new THREE.Euler(), _mA = new THREE.Matrix4(), _mB = new THREE.Matrix4();
 const _f1 = v3(), _f2 = v3(), _f3 = v3();
 
-function qYXZ(out, y, x, z) { return out.setFromEuler(_e.set(x, y, z, 'YXZ')); }
+export function qYXZ(out, y, x, z) { return out.setFromEuler(_e.set(x, y, z, 'YXZ')); }
 function perp(out, a) {
   if (Math.abs(a.x) < 0.9) out.set(1, 0, 0); else out.set(0, 1, 0);
   return out.addScaledVector(a, -out.dot(a)).normalize();
 }
 // unit part of v orthogonal to the unit vector a
-function orth(out, v, a) {
+export function orth(out, v, a) {
   out.copy(v).addScaledVector(a, -v.dot(a));
   if (out.lengthSq() < 1e-10) return perp(out, a);
   return out.normalize();
@@ -31,12 +31,12 @@ function frame(m, d, p) {
   return m.makeBasis(_f1, _f2, _f3);
 }
 // the rotation taking direction d0 onto d1, and p0 (its part orthogonal to d0) onto p1's
-function alignQ(out, d0, p0, d1, p1) {
+export function alignQ(out, d0, p0, d1, p1) {
   frame(_mA, d0, p0); frame(_mB, d1, p1);
   return out.setFromRotationMatrix(_mB.multiply(_mA.transpose()));
 }
 // signed twist angle of q about the unit axis
-function twist(q, a) {
+export function twist(q, a) {
   const s = q.w < 0 ? -1 : 1;
   return 2 * Math.atan2(s * (q.x * a.x + q.y * a.y + q.z * a.z), s * q.w);
 }
@@ -89,7 +89,7 @@ function toolAngles(u, w, ref) {
 }
 
 // ---------------------------------------------------------------- skeleton
-class Rig {
+export class Rig {
   constructor(root) {
     this.root = root;
     root.updateMatrixWorld(true);
@@ -130,7 +130,7 @@ class Rig {
 // two-bone IK: shoulder/hip S, target T, bone lengths, pole direction. Writes the joint E, the
 // reached end W and the solve basis a (S->W) / b (towards the joint).
 const _d = v3();
-function ik2(S, T, L1, L2, pole, E, W, a, b) {
+export function ik2(S, T, L1, L2, pole, E, W, a, b) {
   _d.subVectors(T, S);
   let d = _d.length();
   if (d < 1e-6) a.set(0, -1, 0); else a.copy(_d).multiplyScalar(1 / d);
@@ -323,6 +323,63 @@ const bump = (u, pk) => Math.sin(PI * (u < pk ? .5 * u / pk : .5 + .5 * (u - pk)
 const CURL = [1.45, 1.65, 1.0], CMAX = [1.55, 1.8, 1.25], TCURL = [.55, .6, .7];
 const FISHQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(v3(0, -1, 0), v3(-1, 0, 0), v3(0, 0, -1)));
 
+// ---------------------------------------------------------------- arms (shared with the first-person view model)
+// arm chain, grip socket and finger / thumb curl axes of one side (k: 0 = left, 1 = right)
+export function makeArm(R, k) {
+  const sf = k ? 'r' : 'l', s = k ? -1 : 1, rP = R.rP;
+  const A = { k, s, clav: R.i('clavicle_' + sf), up: R.i('upperarm_' + sf), lo: R.i('lowerarm_' + sf), hand: R.i('hand_' + sf) };
+  A.L1 = rP[A.lo].distanceTo(rP[A.up]); A.L2 = rP[A.hand].distanceTo(rP[A.lo]);
+  A.u0 = v3().subVectors(rP[A.lo], rP[A.up]).normalize(); A.l0 = v3().subVectors(rP[A.hand], rP[A.lo]).normalize();
+  A.h0 = v3().crossVectors(A.u0, A.l0).normalize();
+  const f0 = v3().subVectors(rP[R.i('middle_01_' + sf)], rP[A.hand]).normalize();
+  const t0 = v3().subVectors(rP[R.i('index_01_' + sf)], rP[R.i('pinky_01_' + sf)]).normalize();
+  const X = v3().crossVectors(f0, t0).normalize();          // palmar (left) / dorsal (right)
+  const palm = X.clone().multiplyScalar(s);
+  A.f0 = f0; A.p0 = palm;
+  // grip socket: +Y along a held handle (thumb side), -Z where the fingers point, origin in the fist
+  const Ys = orth(v3(), v3().copy(t0).multiplyScalar(Math.cos(.3)).addScaledVector(f0, Math.sin(.3)), X);
+  const Zs = v3().crossVectors(X, Ys);
+  const qs = q4().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Ys, Zs));
+  const ps = v3().copy(rP[A.hand]).addScaledVector(f0, .082).addScaledVector(palm, .03);
+  A.rQi = R.rQ[A.hand].clone().invert();
+  A.qloc = A.rQi.clone().multiply(qs); A.qlocI = A.qloc.clone().invert();
+  A.ploc = ps.sub(rP[A.hand]).applyQuaternion(A.rQi);
+  A.fingers = [['index', .8], ['middle', .93], ['ring', 1.07], ['pinky', 1.2]].map(([n, kk]) => {
+    const j = [1, 2, 3].map(m => R.i(`${n}_0${m}_${sf}`));
+    const ax = j.map((ji, m) => {
+      const d = m < 2 ? v3().subVectors(rP[j[m + 1]], rP[ji]) : v3().subVectors(rP[ji], rP[j[m - 1]]);
+      return v3().crossVectors(d.normalize(), palm).normalize();
+    });
+    return { j, k: kk, ax };
+  });
+  const tj = [1, 2, 3].map(m => R.i(`thumb_0${m}_${sf}`));
+  const across = v3().copy(palm).multiplyScalar(.7).addScaledVector(t0, -.7).normalize();
+  A.thumb = { j: tj, ax: tj.map((ji, m) => {
+    const d = m < 2 ? v3().subVectors(rP[tj[m + 1]], rP[ji]) : v3().subVectors(rP[ji], rP[tj[m - 1]]);
+    return v3().crossVectors(d.normalize(), across).normalize();
+  }) };
+  A.W = v3(); A.Wr = v3(); A.E = v3(); A.a = v3(); A.b = v3(); A.pole = v3(); A.Gh = q4();
+  return A;
+}
+
+// curl the fingers (c) and thumb (th) of arm A round its grip, relative to the hand bone
+export function curlFingers(G, A, c, th) {
+  for (const F of A.fingers) {
+    let par = G[A.hand];
+    for (let m = 0; m < 3; m++) {
+      const j = F.j[m];
+      G[j].copy(par).multiply(_qx.setFromAxisAngle(F.ax[m], Math.min(CMAX[m], CURL[m] * c * F.k)));
+      par = G[j];
+    }
+  }
+  let par = G[A.hand];
+  for (let m = 0; m < 3; m++) {
+    const j = A.thumb.j[m];
+    G[j].copy(par).multiply(_qx.setFromAxisAngle(A.thumb.ax[m], TCURL[m] * th));
+    par = G[j];
+  }
+}
+
 // ---------------------------------------------------------------- the animator
 const _v = v3(), _v2 = v3(), _v3 = v3(), _u = v3(), _l = v3(), _h = v3(), _w = v3(), _p = v3(), _p2 = v3();
 const _qS = q4(), _qU = q4(), _qF = q4(), _qH = q4(), _qT = q4(), _qT2 = q4(), _qc = q4(), _qx = q4(), _qy = q4();
@@ -334,7 +391,7 @@ export class Human {
     const root = this.root = scene.getObjectByName('Farmer') || scene;
     const R = this.rig = new Rig(root);
     this.ib = { root: R.i('Root'), pelvis: R.i('pelvis'), s1: R.i('spine_01'), s2: R.i('spine_02'), s3: R.i('spine_03'), neck: R.i('neck_01'), head: R.i('head') };
-    this.arms = [0, 1].map(k => this.makeArm(k));
+    this.arms = [0, 1].map(k => makeArm(R, k));
     this.legs = [0, 1].map(k => this.makeLeg(k));
     this.base = new Pose(); this.tmp = new Pose(); this.out = new Pose();
     this.sources = []; this.grips = {}; this.toolKey = 'none';
@@ -346,43 +403,6 @@ export class Human {
     this.fishHolder = new THREE.Group(); this.fishHolder.name = 'fishHolder'; root.add(this.fishHolder);
     this.TPa = v3(); this.TQa = q4(); this.toolOK = false;
     this.onStep = null; this.first = true;
-  }
-
-  makeArm(k) {
-    const R = this.rig, sf = k ? 'r' : 'l', s = k ? -1 : 1, rP = R.rP;
-    const A = { k, s, clav: R.i('clavicle_' + sf), up: R.i('upperarm_' + sf), lo: R.i('lowerarm_' + sf), hand: R.i('hand_' + sf) };
-    A.L1 = rP[A.lo].distanceTo(rP[A.up]); A.L2 = rP[A.hand].distanceTo(rP[A.lo]);
-    A.u0 = v3().subVectors(rP[A.lo], rP[A.up]).normalize(); A.l0 = v3().subVectors(rP[A.hand], rP[A.lo]).normalize();
-    A.h0 = v3().crossVectors(A.u0, A.l0).normalize();
-    const f0 = v3().subVectors(rP[R.i('middle_01_' + sf)], rP[A.hand]).normalize();
-    const t0 = v3().subVectors(rP[R.i('index_01_' + sf)], rP[R.i('pinky_01_' + sf)]).normalize();
-    const X = v3().crossVectors(f0, t0).normalize();          // palmar (left) / dorsal (right)
-    const palm = X.clone().multiplyScalar(s);
-    A.f0 = f0; A.p0 = palm;
-    // grip socket: +Y along a held handle (thumb side), -Z where the fingers point, origin in the fist
-    const Ys = orth(v3(), v3().copy(t0).multiplyScalar(Math.cos(.3)).addScaledVector(f0, Math.sin(.3)), X);
-    const Zs = v3().crossVectors(X, Ys);
-    const qs = q4().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Ys, Zs));
-    const ps = v3().copy(rP[A.hand]).addScaledVector(f0, .082).addScaledVector(palm, .03);
-    A.rQi = R.rQ[A.hand].clone().invert();
-    A.qloc = A.rQi.clone().multiply(qs); A.qlocI = A.qloc.clone().invert();
-    A.ploc = ps.sub(rP[A.hand]).applyQuaternion(A.rQi);
-    A.fingers = [['index', .8], ['middle', .93], ['ring', 1.07], ['pinky', 1.2]].map(([n, kk]) => {
-      const j = [1, 2, 3].map(m => R.i(`${n}_0${m}_${sf}`));
-      const ax = j.map((ji, m) => {
-        const d = m < 2 ? v3().subVectors(rP[j[m + 1]], rP[ji]) : v3().subVectors(rP[ji], rP[j[m - 1]]);
-        return v3().crossVectors(d.normalize(), palm).normalize();
-      });
-      return { j, k: kk, ax };
-    });
-    const tj = [1, 2, 3].map(m => R.i(`thumb_0${m}_${sf}`));
-    const across = v3().copy(palm).multiplyScalar(.7).addScaledVector(t0, -.7).normalize();
-    A.thumb = { j: tj, ax: tj.map((ji, m) => {
-      const d = m < 2 ? v3().subVectors(rP[tj[m + 1]], rP[ji]) : v3().subVectors(rP[ji], rP[tj[m - 1]]);
-      return v3().crossVectors(d.normalize(), across).normalize();
-    }) };
-    A.W = v3(); A.Wr = v3(); A.E = v3(); A.a = v3(); A.b = v3(); A.pole = v3(); A.Gh = q4();
-    return A;
   }
 
   makeLeg(k) {
@@ -716,7 +736,7 @@ export class Human {
     const tw = twist(_qx, A.l0);
     G[A.lo].multiply(_qx.setFromAxisAngle(A.l0, clamp(tw * .5, -1.4, 1.4)));
     G[A.hand].copy(A.Gh);
-    this.fingers(A, C[a + 'c'], C[a + 'th']);
+    curlFingers(G, A, C[a + 'c'], C[a + 'th']);
   }
 
   // blend the arm towards placing its grip socket at (tp, tq) (a tool frame when grip is given)
@@ -739,24 +759,6 @@ export class Human {
     _qT.copy(_qx).multiply(A.qloc); _p.copy(A.ploc).applyQuaternion(_qx).add(A.Wr);
     this.TQa.copy(_qT).multiply(g.qi);
     this.TPa.copy(g.p).applyQuaternion(this.TQa).negate().add(_p);
-  }
-
-  fingers(A, c, th) {
-    const G = this.rig.G;
-    for (const F of A.fingers) {
-      let par = G[A.hand];
-      for (let m = 0; m < 3; m++) {
-        const j = F.j[m];
-        G[j].copy(par).multiply(_qx.setFromAxisAngle(F.ax[m], Math.min(CMAX[m], CURL[m] * c * F.k)));
-        par = G[j];
-      }
-    }
-    let par = G[A.hand];
-    for (let m = 0; m < 3; m++) {
-      const j = A.thumb.j[m];
-      G[j].copy(par).multiply(_qx.setFromAxisAngle(A.thumb.ax[m], TCURL[m] * th));
-      par = G[j];
-    }
   }
 
   // grip socket of a hand in character space
