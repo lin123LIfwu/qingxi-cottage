@@ -157,8 +157,10 @@ class Game {
     }
     this.pipeline.render(this.env.exposure, 0);
     loading.done();
-    const auto = sessionStorage.getItem('qingxi-autostart');
-    if (auto) { sessionStorage.removeItem('qingxi-autostart'); this.startPlay(true); }
+    // (storage access throws inside sandboxed frames without same-origin; the game then just doesn't save)
+    let auto = null;
+    try { auto = sessionStorage.getItem('qingxi-autostart'); if (auto) sessionStorage.removeItem('qingxi-autostart'); } catch (e) { /* ignore */ }
+    if (auto) this.startPlay(true);
     else if (params.get('autostart')) this.startPlay(!this.saved);
     else this.ui.showTitle(this.saved);
     this.last = performance.now();

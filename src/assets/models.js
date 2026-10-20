@@ -2,7 +2,8 @@
 // loadModels() must finish before the player / view model are built.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+// pure-JS meshopt decoder: no WebAssembly, so the game also loads under strict CSP hosts
+import { MeshoptDecoder } from '../util/meshoptDecoder.js';
 import HOE from './hoe.glb.js';
 import CAN from './can.glb.js';
 import ROD from './rod.glb.js';
@@ -19,8 +20,49 @@ function b64(s) {
   return u.buffer;
 }
 
+// Decode images straight from bytes. GLTFLoader (and <img src="data:...">) go through blob: /
+// data: URLs, which a strict Content-Security-Policy (img-src / connect-src) may refuse;
+// createImageBitmap(blob) involves no URL at all.
+const BITMAP_OPTS = { premultiplyAlpha: 'none', colorSpaceConversion: 'none' };
+const canBitmap = typeof createImageBitmap !== 'undefined';
+function bytesToImage(bytes, mime) {
+  const blob = new Blob([bytes], { type: mime });
+  if (canBitmap) return createImageBitmap(blob, BITMAP_OPTS).catch(() => urlImage(blob));
+  return urlImage(blob);
+}
+function urlImage(blob) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(blob), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = (e) => { URL.revokeObjectURL(url); rej(e); };
+    img.src = url;
+  });
+}
+// GLTFLoader plugin: embedded (bufferView) images are decoded from their bytes, where the
+// loader would otherwise fetch() a blob: URL
+function bitmapImages(parser) {
+  const orig = parser.loadImageSource.bind(parser);
+  parser.loadImageSource = function (sourceIndex, loader) {
+    const def = this.json.images[sourceIndex];
+    // keep three's choice of <img> for browsers with unreliable ImageBitmap (old Safari / Firefox)
+    if (def.bufferView === undefined || !loader.isImageBitmapLoader) return orig(sourceIndex, loader);
+    if (this.sourceCache[sourceIndex] !== undefined) return this.sourceCache[sourceIndex].then(t => t.clone());
+    const p = this.getDependency('bufferView', def.bufferView)
+      .then(bv => bytesToImage(new Uint8Array(bv), def.mimeType))
+      .then(img => {
+        const t = new THREE.Texture(img);
+        t.needsUpdate = true;
+        t.userData.mimeType = def.mimeType;
+        return t;
+      });
+    this.sourceCache[sourceIndex] = p;
+    return p;
+  };
+  return { name: 'QX_bitmap_images' };
+}
+
 export async function loadModels(renderer) {
-  const L = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  const L = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).register(bitmapImages);
   const aniso = Math.min(8, renderer ? renderer.capabilities.getMaxAnisotropy() : 4);
   await Promise.all(Object.entries(SRC).map(([k, s]) => L.parseAsync(b64(s), '').then(g => { MODELS[k] = g.scene; })));
   for (const k in MODELS) MODELS[k].traverse(o => {
@@ -63,9 +105,9 @@ const iconTex = {};
 export function cropIcon(key) {
   if (iconTex[key]) return iconTex[key].ready.then(() => iconTex[key]);
   const t = new THREE.Texture(); t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; t.anisotropy = 4;
-  const img = new Image();
-  t.ready = new Promise(res => { img.onload = () => { t.image = img; t.needsUpdate = true; res(); }; img.onerror = res; });
-  img.src = ICONS[key] || ICONS.sprout;
+  const url = ICONS[key] || ICONS.sprout, comma = url.indexOf(',');
+  const mime = url.slice(5, url.indexOf(';')), bytes = new Uint8Array(b64(url.slice(comma + 1)));
+  t.ready = bytesToImage(bytes, mime).then(img => { t.image = img; t.needsUpdate = true; }, () => { /* icon stays blank */ });
   iconTex[key] = t;
   return t.ready.then(() => t);
 }
