@@ -452,40 +452,150 @@ export class Terrain {
   }
 
   buildFarMountains() {
-    const segA = 160, rings = [118, 135, 160, 200, 260, 340, 450, 600, 800];
-    const pos = [], col = [], idx = [];
-    const cF = new THREE.Color('#3f6b3a'), cR = new THREE.Color('#7d8a8f'), cS = new THREE.Color('#f2f4f6');
-    const c = new THREE.Color();
-    for (let r = 0; r < rings.length; r++) {
-      for (let a = 0; a <= segA; a++) {
-        const ang = (a / segA) * Math.PI * 2;
-        const R = rings[r];
-        const x = Math.cos(ang) * R, z = Math.sin(ang) * R;
-        const n = fbm(this.noise, Math.cos(ang) * 2.2 + r * 0.31, Math.sin(ang) * 2.2 - r * 0.17, 5);
-        const ridge = 1 - Math.abs(this.noise(Math.cos(ang) * 4.5 + 40, Math.sin(ang) * 4.5 + r * 0.5));
-        let h = 0;
-        if (r === 0) h = 22 + 8 * n;
-        else h = (30 + r * 14) * (0.55 + 0.45 * n) + ridge * ridge * (18 + r * 9);
-        if (r === rings.length - 1) h *= 0.35;
-        pos.push(x, h, z);
-        c.copy(cF).lerp(cR, smoothstep(40, 110, h)).lerp(cS, smoothstep(125, 170, h));
-        col.push(c.r, c.g, c.b);
+    // Distant ranges ringing the valley.  A polar grid (fine in azimuth, rings spaced
+    // geometrically out to 1.1 km) carries a domain-warped ridged multifractal, shaped by a
+    // radial envelope (forested foothills behind the rim, high snowy peaks further out) and a
+    // broad massif mask; both river valleys continue out through the ranges.  Inside the
+    // playable square the surface stays under the terrain so the two meshes join seamlessly.
+    const N = this.noise, half = this.half;
+    const NA = 720, NR = 84, R0 = 100, R1 = 1100;
+    const KR = [100, 135, 230, 400, 620, 880, 1100], KH = [24, 30, 72, 155, 245, 320, 280];
+    const envAt = (r) => {
+      for (let k = 1; k < KR.length; k++) if (r <= KR[k]) return KH[k - 1] + (KH[k] - KH[k - 1]) * smoothstep(KR[k - 1], KR[k], r);
+      return KH[KH.length - 1];
+    };
+    const mountainH = (x, z, r) => {
+      const wx = x + 60 * fbm(N, x * 0.0018 + 5.2, z * 0.0018 - 1.3, 2);
+      const wz = z + 60 * fbm(N, x * 0.0018 - 7.7, z * 0.0018 + 3.9, 2);
+      // ridged multifractal; octaves finer than the local grid spacing fade out
+      const minL = r * 0.06;
+      let s = 0, a = 1, f = 0.0012, w = 1, n = 0;
+      for (let o = 0; o < 6; o++) {
+        let v = 1 - Math.abs(N(wx * f + o * 31.7, wz * f - o * 17.3));
+        v *= v * w;
+        w = clamp(v * 1.1, 0.25, 1);
+        s += v * a * smoothstep(minL, minL * 1.6, 1 / f); n += a;
+        a *= o < 2 ? 0.5 : 0.38; f *= 2.05;
+      }
+      const m = smoothstep(-0.5, 0.6, fbm(N, x * 0.0008 + 2.1, z * 0.0008 + 8.4, 3));
+      return envAt(r) * (0.06 + 0.3 * m + 1.1 * (s / n) * (0.25 + 0.75 * m));
+    };
+    // the river leaves the square at both ends: carve meandering valleys outwards
+    const P = this.river.pts, pa = P[0], pb = P[P.length - 1];
+    const exits = [{ x: pa.x, z: pa.z, dx: -pa.tx, dz: -pa.tz, k: 0.0 }, { x: pb.x, z: pb.z, dx: pb.tx, dz: pb.tz, k: 4.7 }];
+    const carve = (h, x, z) => {
+      for (const e of exits) {
+        const rx = x - e.x, rz = z - e.z;
+        const along = rx * e.dx + rz * e.dz;
+        if (along < -40) continue;
+        const side = -rx * e.dz + rz * e.dx;
+        const mean = 90 * N(along * 0.003 + e.k, 3.7 + e.k) * smoothstep(0, 220, along);
+        const wv = 30 + Math.max(along, 0) * 0.32;
+        const v = (1 - smoothstep(wv * 0.3, wv, Math.abs(side - mean))) * smoothstep(-40, 10, along);
+        const floor = 3 + Math.max(along, 0) * 0.07 + 6 * N(x * 0.02, z * 0.02);
+        h = lerp(h, Math.min(h, floor), v * 0.95);
+      }
+      return h;
+    };
+    const V = NA * NR;
+    const pos = new Float32Array(V * 3), H = new Float32Array(V);
+    for (let j = 0; j < NR; j++) {
+      const r = R0 * Math.pow(R1 / R0, j / (NR - 1));
+      for (let i = 0; i < NA; i++) {
+        const ang = (i / NA) * Math.PI * 2;
+        const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
+        const out = Math.max(Math.abs(x), Math.abs(z)) - half;
+        let h;
+        if (out < 1) h = this.heightAt(x, z) - 4;
+        else {
+          h = carve(mountainH(x, z, r), x, z);
+          const hEdge = this.heightAt(clamp(x, -half + 0.5, half - 0.5), clamp(z, -half + 0.5, half - 0.5));
+          h = lerp(hEdge - 1, h, smoothstep(0, 70, out));
+        }
+        const k = j * NA + i;
+        pos[k * 3] = x; pos[k * 3 + 1] = h; pos[k * 3 + 2] = z; H[k] = h;
       }
     }
-    const W = segA + 1;
-    for (let r = 0; r < rings.length - 1; r++) for (let a = 0; a < segA; a++) {
-      const i0 = r * W + a, i1 = i0 + 1, i2 = i0 + W, i3 = i2 + 1;
-      idx.push(i0, i1, i2, i1, i3, i2);
+    const idx = new Uint32Array((NR - 1) * NA * 6);
+    let q = 0;
+    for (let j = 0; j < NR - 1; j++) for (let i = 0; i < NA; i++) {
+      const i0 = j * NA + i, i1 = j * NA + (i + 1) % NA, i2 = i0 + NA, i3 = i1 + NA;
+      idx[q++] = i0; idx[q++] = i1; idx[q++] = i2; idx[q++] = i1; idx[q++] = i3; idx[q++] = i2;
     }
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    g.setIndex(idx);
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
     g.computeVertexNormals();
-    const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 }));
+    // surface classes (forest / rock / snow) and valley occlusion, refined per pixel by the shader
+    const nrm = g.attributes.normal.array, mt = new Float32Array(V * 4);
+    for (let j = 0; j < NR; j++) for (let i = 0; i < NA; i++) {
+      const k = j * NA + i, x = pos[k * 3], h = H[k], z = pos[k * 3 + 2];
+      const steep = 1 - nrm[k * 3 + 1];
+      const tl = 215 + 40 * N(x * 0.003 + 9.1, z * 0.003 - 4.2), sl = 300 + 30 * N(x * 0.004 - 3.3, z * 0.004 + 7.7);
+      const forest = (1 - smoothstep(tl - 40, tl + 25, h)) * (1 - smoothstep(0.36, 0.52, steep));
+      const rock = Math.max(smoothstep(0.42, 0.58, steep), smoothstep(tl + 15, tl + 80, h) * smoothstep(0.1, 0.26, steep));
+      const snow = smoothstep(sl - 20, sl + 25, h) * (1 - smoothstep(0.42, 0.6, steep));
+      // concavity against the local mean height: valleys and gullies darker, crests lighter
+      let sum = 0, cnt = 0;
+      for (let dj = -2; dj <= 2; dj++) {
+        const jj = j + dj; if (jj < 0 || jj >= NR) continue;
+        for (let di = -6; di <= 6; di += 2) { sum += H[jj * NA + (i + di + NA) % NA]; cnt++; }
+      }
+      const ao = clamp(0.84 + (h - sum / cnt) / 70, 0.5, 1.08);
+      mt[k * 4] = forest; mt[k * 4 + 1] = rock; mt[k * 4 + 2] = snow; mt[k * 4 + 3] = ao;
+    }
+    g.setAttribute('aMt', new THREE.BufferAttribute(mt, 4));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), R1 + 600);
+    const m = new THREE.Mesh(g, makeMountainMaterial());
     m.name = 'farMountains';
     return m;
   }
+}
+
+function makeMountainMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec4 aMt;\nvarying vec4 vMt;\nvarying vec3 vMW;\nvarying vec3 vMN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMt = aMt;\nvMN = normal;\nvMW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec4 vMt; varying vec3 vMW; varying vec3 vMN;
+vec3 mNW; float mRough;
+${GLSL_NOISE}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec3 N0 = normalize(vMN);
+  float dist = distance(vMW, cameraPosition);
+  float fine = 1.0 - smoothstep(350.0, 900.0, dist);
+  vec2 p = vMW.xz;
+  float nA = fbm3(p * 0.004), nB = fbm3(p * 0.03), nC = vnoise(p * 0.12);
+  // ragged tree line, rock bands and snow fields
+  float forest = smoothstep(0.3, 0.7, vMt.x + (nB - 0.5) * 0.7);
+  float rock = smoothstep(0.35, 0.65, vMt.y + (nB - 0.5) * 0.6 + (nA - 0.5) * 0.3);
+  float snow = smoothstep(0.4, 0.6, vMt.z + (nB - 0.5) * 0.45 + (nA - 0.5) * 0.25);
+  vec3 cMeadow = mix(vec3(0.10, 0.13, 0.045), vec3(0.17, 0.18, 0.07), nA);
+  vec3 cForest = mix(vec3(0.022, 0.05, 0.02), vec3(0.045, 0.075, 0.028), nB) * mix(1.0, 0.7 + 0.6 * nC, fine);
+  vec3 cRock = mix(vec3(0.14, 0.13, 0.11), vec3(0.23, 0.215, 0.19), nB) * mix(1.0, 0.8 + 0.4 * nC, fine);
+  vec3 c = mix(cMeadow, cForest, forest);
+  c = mix(c, cRock, rock);
+  c = mix(c, vec3(0.78, 0.8, 0.84), snow);
+  diffuseColor.rgb = c * vMt.w;
+  mRough = mix(0.95, 0.7, snow);
+  // canopy / crag relief: bump mapping from screen-space derivatives (no tangents needed)
+  float bh = (nB * 6.0 + nC * 2.5 * fine) * mix(1.0, 0.35, snow);
+  vec3 dpx = dFdx(vMW), dpy = dFdy(vMW);
+  vec3 r1 = cross(dpy, N0), r2 = cross(N0, dpx);
+  float det = dot(dpx, r1);
+  vec3 grad = sign(det) * (dFdx(bh) * r1 + dFdy(bh) * r2);
+  mNW = normalize(abs(det) * N0 - grad * (0.35 + 0.65 * fine));
+}`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mRough;')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(mNW, 0.0)).xyz);')
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\nreflectedLight.indirectDiffuse *= vMt.w;');
+  };
+  mat.customProgramCacheKey = () => 'farMountains2';
+  return mat;
 }
 
 function makeTerrainMaterial(U, T) {
@@ -498,6 +608,8 @@ function makeTerrainMaterial(U, T) {
     sh.uniforms.tGround = { value: T.groundTex }; sh.uniforms.tWaterLv = { value: T.waterTex };
     sh.uniforms.uGroundRect = { value: T.groundRect }; sh.uniforms.uWaterRect = { value: T.waterRect };
     sh.uniforms.tGC = { value: TEX.groundC }; sh.uniforms.tGN = { value: TEX.groundN };
+    // radius band where the grass field ends (set by GrassField for the active quality)
+    sh.uniforms.uGrassR = T.grassR || (T.grassR = { value: new THREE.Vector2(20, 34) });
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec4 aSplat;\nvarying vec4 vSplat;\nvarying vec3 vWPos;\nvarying vec3 vNW;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSplat = aSplat;\nvNW = normal;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
@@ -505,7 +617,7 @@ function makeTerrainMaterial(U, T) {
       .replace('#include <common>', `#include <common>
 uniform float uTime; uniform float uWet;
 uniform sampler2D tGround; uniform sampler2D tWaterLv; uniform vec4 uGroundRect; uniform vec4 uWaterRect;
-uniform sampler2DArray tGC; uniform sampler2DArray tGN;
+uniform sampler2DArray tGC; uniform sampler2DArray tGN; uniform vec2 uGrassR;
 varying vec4 vSplat; varying vec3 vWPos; varying vec3 vNW;
 float tUnder; float tWetK; vec3 gNW; float gRough; float gAO;
 ${GLSL_NOISE}
@@ -610,6 +722,11 @@ void gMix(inout GS a, GS b, float k){ a.c = mix(a.c, b.c, k); a.n = mix(a.n, b.n
   gNW = normalize(cur.n.xyz);
   gAO = cur.n.a;
   col *= mix(0.62, 1.0, vSplat.w) * mix(0.75, 1.0, gAO);
+  // soil between the grass blades sits in the shade of the sward: darker and greener,
+  // fading back to the plain turf where the grass field ends
+  float gUnder = gm.b * (1.0 - smoothstep(0.2, 0.55, gm.r)) * (1.0 - wP) * (1.0 - wG)
+               * (1.0 - smoothstep(uGrassR.x, uGrassR.y, distance(vWPos.xz, cameraPosition.xz)));
+  col = mix(col, col * vec3(0.52, 0.6, 0.42), gUnder * 0.75);
   float wetK = clamp(1.0 - (vWPos.y - wl) / 0.45, 0.0, 1.0);
   wetK = max(wetK, uWet * 0.75);
   col *= mix(1.0, 0.62, wetK * (1.0 - smoothstep(0.1, 0.6, tUnder) * 0.4));

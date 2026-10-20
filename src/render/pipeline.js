@@ -75,7 +75,7 @@ export class Pipeline {
       uniforms: {
         tScene: { value: null }, tBloom: { value: null }, uExposure: { value: 0.7 }, uBloom: { value: 0.14 },
         uSat: { value: 1.08 }, uTint: { value: new THREE.Vector3(1, 1, 1) }, uVignette: { value: 0.55 }, uFade: { value: 0 }, uTime: { value: 0 },
-        uLift: { value: new THREE.Vector3(0.012, 0.010, 0.016) },
+        uLift: { value: new THREE.Vector3(0.004, 0.004, 0.006) },
       },
       vertexShader: FS_VERT,
       fragmentShader: /* glsl */`uniform sampler2D tScene; uniform sampler2D tBloom; uniform float uExposure; uniform float uBloom;

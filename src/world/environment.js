@@ -2,16 +2,76 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { clamp, lerp, smoothstep } from '../util/math.js';
 
-// custom fog: exponential with distance offset and cap (keeps far mountains as hazy silhouettes)
+// ---- atmosphere ----------------------------------------------------------------------
+// Aerial perspective replaces three's distance fog for every material that has fog enabled:
+// an analytic exponential height fog (densest on the valley floor, thinning with altitude)
+// plus a haze whose optical depth grows with distance, so the near field stays crisp while
+// the far ranges sink into a soft blue haze.  Blue light is scattered more than red, and the
+// haze brightens towards the sun (forward scattering).  The parameters live in typed arrays:
+// three copies uniform objects into every material but keeps typed-array values by
+// reference, so all shaders share them.  scene.fog (FogExp2) supplies colour and the
+// distance-haze coefficient (fogDensity).
+export const FOG = {
+  sunDir: new Float32Array([0, 1, 0]),
+  sunCol: new Float32Array([0, 0, 0]),
+  // x: ground-layer extinction (1/m), y: height falloff (1/m), z: blue shift, w: max amount
+  params: new Float32Array([0.0001, 0.011, 1, 0.95]),
+};
+{
+  const extra = { fogSunDir: { value: FOG.sunDir }, fogSunCol: { value: FOG.sunCol }, fogParams: { value: FOG.params } };
+  Object.assign(THREE.UniformsLib.fog, extra);
+  for (const k in THREE.ShaderLib) { const u = THREE.ShaderLib[k].uniforms; if (u && u.fogColor) Object.assign(u, extra); }
+}
+THREE.ShaderChunk.fog_pars_vertex = /* glsl */`
+#ifdef USE_FOG
+  varying float vFogDepth;
+  varying vec3 vFogRay;
+#endif
+`;
+THREE.ShaderChunk.fog_vertex = /* glsl */`
+#ifdef USE_FOG
+  vFogDepth = - mvPosition.z;
+  vFogRay = mvPosition.xyz * mat3( viewMatrix );
+#endif
+`;
+THREE.ShaderChunk.fog_pars_fragment = /* glsl */`
+#ifdef USE_FOG
+  uniform vec3 fogColor;
+  uniform vec3 fogSunDir;
+  uniform vec3 fogSunCol;
+  uniform vec4 fogParams;
+  varying float vFogDepth;
+  varying vec3 vFogRay;
+  #ifdef FOG_EXP2
+    uniform float fogDensity;
+  #else
+    uniform float fogNear;
+    uniform float fogFar;
+  #endif
+#endif
+`;
 THREE.ShaderChunk.fog_fragment = /* glsl */`
 #ifdef USE_FOG
   #ifdef FOG_EXP2
-    float fogF = 1.0 - exp( - fogDensity * max( vFogDepth - 14.0, 0.0 ) );
-    fogF = min( fogF, 0.93 );
+  {
+    vec4 fp = fogParams.w > 0.0 ? fogParams : vec4( 0.0001, 0.011, 1.0, 0.95 );
+    float fL = length( vFogRay );
+    vec3 fDir = vFogRay / max( fL, 1e-3 );
+    float fLr = max( fL - 6.0, 0.0 );
+    // mean density factor of the height layer along the ray (closed-form integral)
+    float fY = cameraPosition.y + fDir.y * ( fL - fLr );
+    float fK = max( fp.y * fDir.y * fLr, -30.0 );
+    float fH = exp( - fp.y * fY ) * ( abs( fK ) > 1e-4 ? ( 1.0 - exp( - fK ) ) / fK : 1.0 );
+    float tau = fLr * ( fp.x * fH + fogDensity * fLr * mix( 1.0, fH, 0.6 ) );
+    vec3 fogF = min( 1.0 - exp( - tau * mix( vec3( 1.0 ), vec3( 0.7, 0.93, 1.25 ), fp.z ) ), vec3( fp.w ) );
+    float sd = max( dot( fDir, fogSunDir ), 0.0 );
+    vec3 fogC = fogColor + fogSunCol * ( pow( sd, 5.0 ) * 0.4 + pow( sd, 32.0 ) * 0.9 );
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogC, fogF );
+  }
   #else
     float fogF = smoothstep( fogNear, fogFar, vFogDepth );
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogF );
   #endif
-  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogF );
 #endif
 `;
 
@@ -75,8 +135,8 @@ export class Environment {
     this.cubeCam = new THREE.CubeCamera(1, 5000, this.cubeRT);
     scene.environment = this.cubeRT.texture;
     scene.environmentIntensity = 1.0;
-    scene.fog = new THREE.FogExp2(0xbfd6e6, 0.0055);
-    this.fogColor = new THREE.Color(0xbfd6e6);
+    scene.fog = new THREE.FogExp2(0xbfd6e6, 1.3e-6);
+    this.horizonCol = new THREE.Color(0xbfd6e6); this.horizonLum = 0.6;
     this.readBuf = new Uint16Array(128 * 4);
 
     this.sunDir = new THREE.Vector3(); this.moonDir = new THREE.Vector3(); this.lightDir = new THREE.Vector3();
@@ -176,15 +236,24 @@ export class Environment {
     const dayHemi = new THREE.Color('#cfe0ff'), nightHemi = new THREE.Color('#4a5f9a');
     this.hemi.color.copy(dayHemi).lerp(nightHemi, night);
     this.hemi.groundColor.set('#6b7a45').lerp(new THREE.Color('#1c2433'), night);
-    this.hemi.intensity = lerp(0.32, 0.55, night) * lerp(1, 0.85, wx.dark);
-    // normalise image-based ambient so it stays a soft fill (≈40% of the sun) at every time of day
-    const ambTarget = lerp(0.42, 0.05, night) * lerp(1, 1.12, wx.dark);
-    this.scene.environmentIntensity = clamp(ambTarget / (this.envLum || 3), 0.0, 3.0);
-    this.exposure = lerp(lerp(0.66, 0.78, this.sunsetK), 1.9, night) * lerp(1, 1.25, wx.dark);
+    this.hemi.intensity = lerp(0.24, 0.55, night) * lerp(1, 0.9, wx.dark);
+    // image-based ambient is normalised to a soft fill; lower than before so sunlit and shaded
+    // surfaces separate clearly (overcast days keep more fill since the sun is dimmed)
+    // a low sun lights the ground weakly while the open sky stays bright: lift the fill a little
+    const ambTarget = lerp(0.3, 0.05, night) * lerp(1, 1.35, wx.dark) * (1 + 0.3 * this.sunsetK * (1 - night));
+    this.exposure = lerp(lerp(0.72, 0.82, this.sunsetK), 1.9, night) * lerp(1, 1.25, wx.dark);
 
-    // fog density
+    // ---- atmosphere: morning valley mist, clear afternoons, grey rain ----
     const mist = smoothstep(4.5, 6.2, hour) * smoothstep(9.5, 6.8, hour);
-    this.scene.fog.density = 0.0042 * (1 + mist * 1.6 + wx.rain * 1.4 + night * 0.3);
+    const P = FOG.params;
+    P[0] = 0.0001 + 0.0039 * mist + 0.0004 * wx.dark + 0.0035 * wx.rain + 0.0002 * night;
+    P[1] = lerp(lerp(0.011, 0.045, mist), 0.004, wx.rain);
+    P[2] = lerp(1, 0.25, Math.max(this.sunsetK, wx.dark));
+    P[3] = lerp(0.95, 0.985, wx.rain);
+    this.scene.fog.density = 1.3e-6 * (1 + 0.5 * wx.dark + 1.2 * wx.rain + 0.3 * mist);
+    FOG.sunDir[0] = this.lightDir.x; FOG.sunDir[1] = this.lightDir.y; FOG.sunDir[2] = this.lightDir.z;
+    const sg = 0.12 * (1 - wx.dark * 0.85);
+    FOG.sunCol[0] = this.lightColor.r * sg; FOG.sunCol[1] = this.lightColor.g * sg; FOG.sunCol[2] = this.lightColor.b * sg;
 
     // ---- env cube refresh ----
     this.envTimer += dt;
@@ -192,7 +261,15 @@ export class Environment {
       this.envTimer = 0; this.lastEnvHour = hour; this.forceEnv = false;
       this.updateEnv();
     }
-    this.scene.fog.color.copy(this.fogColor);
+    // after the refresh, so a time jump (e.g. sleeping through the night) never pairs the new
+    // sky with the previous sky's brightness for a frame
+    this.scene.environmentIntensity = clamp(ambTarget / (this.envLum || 3), 0.0, 3.0);
+    // haze colour: horizon hue, lit like a pale diffuse surface (the raw sky is far brighter
+    // than anything lit in the scene); at night it simply follows the dark horizon
+    const lumL = 0.2126 * this.lightColor.r + 0.7152 * this.lightColor.g + 0.0722 * this.lightColor.b;
+    const dayLum = 0.75 * (lumL * Math.max(this.lightDir.y, 0.15) + ambTarget * Math.PI + this.hemi.intensity) / Math.PI;
+    const hl = Math.max(this.horizonLum || 0.6, 1e-4);
+    this.scene.fog.color.copy(this.horizonCol).multiplyScalar(lerp(dayLum, hl * 0.85, night) / hl);
 
     // shared uniforms
     this.U.uSunDir.value.copy(this.lightDir);
@@ -221,11 +298,8 @@ export class Environment {
         }
       }
       if (n > 0 && isFinite(rs)) {
-        this.fogColor.setRGB(rs / n, gs / n, bs / n, THREE.LinearSRGBColorSpace);
+        this.horizonCol.setRGB(rs / n, gs / n, bs / n, THREE.LinearSRGBColorSpace);
         this.horizonLum = 0.2126 * rs / n + 0.7152 * gs / n + 0.0722 * bs / n;
-        // a touch of desaturation for haze
-        const l = (this.fogColor.r + this.fogColor.g + this.fogColor.b) / 3;
-        this.fogColor.lerp(new THREE.Color(l, l, l), 0.15);
       }
       // sky ambient (average upward-ish colour)
       r.readRenderTargetPixels(this.cubeRT, 0, 64, 128, 1, buf, 2);
@@ -234,10 +308,8 @@ export class Environment {
       if (an) this.skyAmbient.setRGB(ar / an, ag / an, ab / an, THREE.LinearSRGBColorSpace);
       const zl = 0.2126 * this.skyAmbient.r + 0.7152 * this.skyAmbient.g + 0.0722 * this.skyAmbient.b;
       this.envLum = Math.max(1e-4, 0.6 * (this.horizonLum || zl) + 0.4 * zl);
-      // the physical sky is far brighter than lit surfaces: keep the fog in the same range as the scene
-      this.fogColor.multiplyScalar(lerp(0.3, 0.85, this.nightK));
     } catch (err) {
-      this.fogColor.set(this.nightK > 0.5 ? '#0d1424' : '#bcd3e4');
+      this.horizonCol.set(this.nightK > 0.5 ? '#0d1424' : '#bcd3e4'); this.horizonLum = this.nightK > 0.5 ? 0.008 : 0.6;
     }
     r.setRenderTarget(prevTarget);
   }
