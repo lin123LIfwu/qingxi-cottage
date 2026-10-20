@@ -1,4 +1,4 @@
-﻿// 2D collision world: circles and oriented boxes in a spatial hash.
+// 2D collision world: circles and oriented boxes in a spatial hash.
 // Optional floor tag lv (0 = ground floor / outside, 1 = upper floor of the house): a collider with a
 // tag only blocks queries made with the same level; untagged colliders (and untagged queries) see everything.
 export class Colliders {

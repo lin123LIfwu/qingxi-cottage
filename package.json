@@ -5,10 +5,11 @@
   "main": "src/main.js",
   "scripts": {
     "build": "node build.mjs",
-    "dev": "npx esbuild --servedir=. --serve=5173"
+    "dev": "npx esbuild --servedir=. --serve=5173",
+    "test": "node --test test/*.test.mjs"
   },
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "esbuild": "^0.28.2",
     "three": "^0.186.1"

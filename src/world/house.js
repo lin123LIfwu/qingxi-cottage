@@ -38,6 +38,9 @@ export class House {
       if (c.t === 'circle') col.addCircle(x, z, c.r, 'house', c.lv);
       else col.addBox(x, z, c.hx, c.hz, c.rot || 0, 'house', c.lv);
     }
+    // the open door leaf stands against the inner west side of the doorway; closed/swinging it is off
+    this.doorCol = col.addBox(OX + 0.915, OZ + 2.725, 0.055, 0.575, 0, 'house-door');
+    this.doorCol.off = true;
     for (const d of L.decks) {
       const cx = OX + (d.x0 + d.x1) / 2, cz = OZ + (d.z0 + d.z1) / 2, hl = (d.x1 - d.x0) / 2;
       const fn = d.h0 !== undefined ? (u) => HOME_H + d.h0 + (d.h1 - d.h0) * clamp((u + hl) / (2 * hl), 0, 1) : () => HOME_H + d.h;
@@ -52,6 +55,9 @@ export class House {
     this.wake = { x: wx, z: wz, y: HOME_H + L.F2, yaw: L.wake.yaw };
     const [dx, dz] = W(L.door.x, L.door.z);
     this.doorPos = new THREE.Vector2(dx, dz); this.doorK = 0; this.doorOpen = false;
+    // the blend path for entering first person goes through the door opening
+    this.portal = new THREE.Vector3(W(1.5, 3.75)[0], HOME_H + L.F1 + 1.58, W(1.5, 3.75)[1]);
+    this.rainMask = { x0: OX - 4.8, z0: OZ - 4.2, x1: OX + 4.8, z1: OZ + 5.65, y: HOME_H + 8.1 };
     this.indoor = false; this.indoorK = 0; this.camIndoor = false;
     this.group = new THREE.Group(); this.group.name = 'house';
     this.group.position.set(OX, HOME_H, OZ);
@@ -64,6 +70,9 @@ export class House {
 
   // ---------------------------------------------------------------- queries (world coordinates)
   inside(x, z) { const r = this.rect; return x > r[0] && x < r[2] && z > r[1] && z < r[3]; }
+  // footprint incl. porch / roof overhang, used to mask rain and ground splashes
+  covered(x, z) { const lx = x - OX, lz = z - OZ; return lx > -4.8 && lx < 4.8 && lz > -4.2 && lz < 5.65; }
+  masked(x, y, z) { return this.covered(x, z) && y < HOME_H + 8.1; }
   levelOf(x, z, y) { return this.inside(x, z) && y - HOME_H - L.F1 > L.level1Above ? 1 : 0; }
   noJump(x, z) {
     const lx = x - OX, lz = z - OZ;
@@ -120,17 +129,18 @@ export class House {
     if (want !== this.doorOpen) { this.doorOpen = want; this.onDoor && this.onDoor(want); }
     this.doorK = damp(this.doorK, want ? 1 : 0, want ? 5 : 3.2, dt);
     if (this.door) this.door.rotation.y = -smoothstep(0, 1, this.doorK) * 1.62;
+    if (this.doorCol) this.doorCol.off = this.doorK < 0.95;
     // lamps
     const n = smoothstep(0.1, 0.65, nightK), lv = player.level, ik = this.indoorK;
     const fl = 0.82 + 0.1 * Math.sin(t * 11.3) + 0.06 * Math.sin(t * 23.7 + 1.3) + 0.05 * Math.sin(t * 5.1);
     const ground = lv === 0 ? 1 : 0;
-    this.lamps.fire.intensity = ik * fl * (ground ? 5.5 : 1.2);
-    this.lamps.table.intensity = ik * ground * n * 4.0;
-    this.lamps.nook.intensity = ik * ground * n * 2.4;
-    this.lamps.bed.intensity = ik * (1 - ground) * (0.6 + n * 2.6);
+    this.lamps.fire.intensity = ik * fl * (ground ? 7.0 : 1.5);
+    this.lamps.table.intensity = ik * ground * (1.6 + 2.4 * n);
+    this.lamps.nook.intensity = ik * ground * (0.8 + 1.6 * n);
+    this.lamps.bed.intensity = ik * (1 - ground) * (0.8 + 2.0 * n);
     for (const m of this.flames) m.uniforms.uK.value = fl;
     for (const m of this.embers) m.emissiveIntensity = 1.6 + 0.6 * Math.sin(t * 2.3) + 0.3 * fl;
-    for (const m of this.shades) m.emissiveIntensity = n * 1.6;
+    for (const m of this.shades) m.emissiveIntensity = n * 1.6 + 0.15;
     // glass: a warm glow from outside at night, clear from inside
     this.glass.emissiveIntensity = this.camIndoor ? 0 : n * (far ? 1.6 : 0.9);
     this.glass.opacity = this.camIndoor ? 0.08 : lerp(0.16, 0.55, n);

@@ -225,7 +225,11 @@ export class Farm {
     return out;
   }
   load(arr) {
+    // tiles from older saves that now lie under a building (the bigger house / props) are dropped
+    const covered = (i, j) => [[0.5, 0.5], [0.05, 0.05], [0.95, 0.05], [0.05, 0.95], [0.95, 0.95]]
+      .some(([a, b]) => this.st.noGrass(i + a, j + b));
     for (const [i, j, wet, type, g] of arr) {
+      if (covered(i, j)) continue;
       this.till(i, j, true);
       const t = this.get(i, j); t.wet = !!wet;
       if (type && CROPS[type]) t.crop = { type, g, stage: this.stageOf(g) };

@@ -1,4 +1,4 @@
-﻿import * as THREE from 'three';
+import * as THREE from 'three';
 import { clamp, lerp, damp, dampAngle } from '../util/math.js';
 import { toolModel, farmerModel, cropIconNow } from '../assets/models.js';
 import { Human } from './human.js';
@@ -19,7 +19,7 @@ export class Player {
     this.charge = 0; this.lineOut = false; this.reelK = 0; this.rodBend = 0; this.rodK = 0;
     this.yawPrev = null; this.yawRate = 0;
     // the timber house (set by main.js): floor level 0 / 1 and indoor rules
-    this.house = null; this.level = 0;
+    this.house = null; this.level = 0; this._tight = false;
     this.build();
   }
 
@@ -78,7 +78,26 @@ export class Player {
     if (vm) this.vm = vm;
     if (!!this.fpActive === on) return;
     this.fpActive = on;
+    this._tight = false;
     this.placeHeldFish();
+    if (!this.hideMats) this.hideMats = new Map();
+    const hide = (m) => {
+      let h = this.hideMats.get(m);
+      if (!h) { h = m.clone(); h.colorWrite = false; h.depthWrite = false; this.hideMats.set(m, h); }
+      return h;
+    };
+    this.root.traverse(o => {
+      if (!o.isMesh) return;
+      if (on) { if (!o.userData.mat0) { o.userData.mat0 = o.material; o.material = Array.isArray(o.material) ? o.material.map(hide) : hide(o.material); } }
+      else if (o.userData.mat0) { o.material = o.userData.mat0; delete o.userData.mat0; }
+    });
+  }
+  // the third-person camera is very close to a wall: hide the body (shadow stays) so it does not
+  // fill the screen. First person owns the same material slots, so it takes precedence.
+  setTightHide(on) {
+    if (this.fpActive) on = false;
+    if (this._tight === on) return;
+    this._tight = on;
     if (!this.hideMats) this.hideMats = new Map();
     const hide = (m) => {
       let h = this.hideMats.get(m);
@@ -120,7 +139,7 @@ export class Player {
     const T = this.T;
     if (r6(x, z) > PLAY_R) return false;
     const gh = T.groundHeight(x, z, fromH);
-    const deck = T.onDeck(x, z);
+    const deck = T.onDeck(x, z, fromH);
     // indoors nothing to fall off (the stair opening has a rail, but just in case)
     if (this.house && this.house.inside(x, z) && gh < fromH - 0.6) return false;
     const lv = T.waterLevelAt(x, z);
@@ -152,21 +171,28 @@ export class Player {
     if (input.face !== undefined && input.face !== null) this.yaw = dampAngle(this.yaw, input.face, 30, dt);
     else if (mx || mz) this.yaw = dampAngle(this.yaw, Math.atan2(mx, mz), 12, dt);
     // ---- horizontal move with checks ----
+    // Sub-step the horizontal move: the thinnest collider (stair rail) is 0.10 m thick, so no
+    // single step may carry the player past a box's mid-plane even at the 10 fps dt cap.
     const cur = this.pos;
-    const curH = T.groundHeight(cur.x, cur.z, cur.y);
-    let nx = cur.x + this.vel.x * dt, nz = cur.z + this.vel.z * dt;
-    const footH = this.grounded ? curH : Math.max(curH, cur.y);
-    if (!this.canStand(nx, nz, footH)) {
-      if (this.canStand(nx, cur.z, footH)) nz = cur.z;
-      else if (this.canStand(cur.x, nz, footH)) nx = cur.x;
-      else { nx = cur.x; nz = cur.z; }
+    const sx0 = cur.x, sz0 = cur.z;
+    const dx = this.vel.x * dt, dz = this.vel.z * dt;
+    const n = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.08));
+    const ux = dx / n, uz = dz / n;
+    for (let i = 0; i < n; i++) {
+      const h0 = T.groundHeight(cur.x, cur.z, cur.y);
+      const footH = this.grounded ? h0 : Math.max(h0, cur.y);
+      let nx = cur.x + ux, nz = cur.z + uz;
+      if (!this.canStand(nx, nz, footH)) {
+        if (this.canStand(nx, cur.z, footH)) nz = cur.z;
+        else if (this.canStand(cur.x, nz, footH)) nx = cur.x;
+        else { nx = cur.x; nz = cur.z; }
+      }
+      const p = { x: nx, z: nz };
+      this.col.resolve(p, 0.3, this.level);
+      if (!this.canStand(p.x, p.z, footH)) { p.x = cur.x; p.z = cur.z; }
+      cur.x = p.x; cur.z = p.z;
     }
-    const p = { x: nx, z: nz };
-    this.col.resolve(p, 0.3, this.level);
-    if (!this.canStand(p.x, p.z, footH)) { p.x = cur.x; p.z = cur.z; }
-    const moved = Math.hypot(p.x - cur.x, p.z - cur.z);
-    cur.x = p.x; cur.z = p.z;
-    this.speed = moved / Math.max(dt, 1e-4);
+    this.speed = Math.hypot(cur.x - sx0, cur.z - sz0) / Math.max(dt, 1e-4);
     // ---- vertical ----
     const gh = T.groundHeight(cur.x, cur.z, cur.y);
     const noJump = this.house && this.house.noJump(cur.x, cur.z);
@@ -181,7 +207,7 @@ export class Player {
     if (this.house) this.level = this.house.levelOf(cur.x, cur.z, cur.y);
     // ---- environment info ----
     const lv = T.waterLevelAt(cur.x, cur.z);
-    const deck = T.onDeck(cur.x, cur.z);
+    const deck = T.onDeck(cur.x, cur.z, cur.y);
     this.waterDepth = (!deck && lv > -40) ? Math.max(0, lv - cur.y) : 0;
     this.waterLevel = lv;
     this.surface = deck ? 'wood' : this.waterDepth > 0.05 ? 'water' : (T.pathAt(cur.x, cur.z) > 0.4 ? 'path' : 'grass');

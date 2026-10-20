@@ -313,6 +313,7 @@ export class Water {
     const steps = q === 'high' ? 32 : q === 'low' ? 10 : 20;
     for (const m of this.materials) { if (m.defines.SSR_STEPS !== steps) { m.defines.SSR_STEPS = steps; m.needsUpdate = true; } }
   }
+  setNear(n) { for (const m of this.materials) m.uniforms.uNear.value = n; }
   bindTargets(colorTex, depthTex, w, h, camera, skyTex) {
     for (const m of this.materials) {
       const u = m.uniforms;

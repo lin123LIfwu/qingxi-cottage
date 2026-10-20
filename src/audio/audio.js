@@ -204,20 +204,22 @@ export class AudioSys {
     this.gustT -= dt;
     if (this.gustT < 0) { this.gustT = 2 + Math.random() * 4; this.gust = 0.3 + Math.random() * 0.8; }
     const rain = o.rain || 0;
-    set(A.wind, (0.02 + 0.035 * this.gust + rain * 0.03) * (o.elev ? 1.3 : 1), 1.5);
+    const inK = o.indoor || 0;   // 0 outside, 1 inside the house (roof muffles the outdoors)
+    const out = 1 - 0.6 * inK;
+    set(A.wind, (0.02 + 0.035 * this.gust + rain * 0.03) * (o.elev ? 1.3 : 1) * out, 1.5);
     A.wind.filt.frequency.setTargetAtTime(500 + this.gust * 500, t, 1.5);
     const rv = 1 / (1 + Math.pow(Math.max(0, o.riverDist - 1) / 6, 1.6));
-    set(A.river, 0.32 * rv, 0.4); set(A.riverHi, 0.018 * rv * (o.riverFast ? 2.5 : 1), 0.4);
+    set(A.river, 0.32 * rv * out, 0.4); set(A.riverHi, 0.018 * rv * (o.riverFast ? 2.5 : 1) * out, 0.4);
     const cv = 1 / (1 + Math.pow(Math.max(0, o.cascadeDist - 3) / 10, 1.8));
-    set(A.cascade, 0.22 * cv, 0.5);
-    set(A.rain, 0.09 * rain, 1); set(A.rainLow, 0.12 * rain, 1);
+    set(A.cascade, 0.22 * cv * out, 0.5);
+    set(A.rain, 0.09 * rain * (1 - 0.78 * inK), 1); set(A.rainLow, 0.12 * rain * (1 - 0.78 * inK), 1);
     // critters
     const pan = () => Math.random() * 1.6 - 0.8;
-    if (o.dayK > 0.4 && rain < 0.3) {
+    if (o.dayK > 0.4 && rain < 0.3 && inK < 0.5) {
       this.birdT -= dt;
       if (this.birdT < 0) { this.birdT = 1.2 + Math.random() * 4.5 / (o.forest ? 1.8 : 1); this.bird(t + 0.05, pan()); }
     }
-    if (o.nightK > 0.4 && rain < 0.5) {
+    if (o.nightK > 0.4 && rain < 0.5 && inK < 0.5) {
       this.cricketT -= dt;
       if (this.cricketT < 0) { this.cricketT = 0.4 + Math.random() * 1.2; this.cricket(t + 0.05, pan()); }
       if (o.pondDist < 25) {

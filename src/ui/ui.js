@@ -121,7 +121,7 @@ export class UI {
   }
   // first / third person: hint text and the view button
   renderViewState() {
-    const fp = this.g.S.settings.view === 'first';
+    const fp = this.g.rig ? this.g.rig.fp : this.g.S.settings.view === 'first';
     if (this.last && this.last.view === fp) return;
     if (this.last) this.last.view = fp;
     this.hintEl.innerHTML = fp
@@ -425,11 +425,11 @@ export class UI {
     const body = el('div', 'help', `
       <h3>🎮 基本操作</h3><table>
       <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / 方向键</td><td>移动（相对镜头方向）</td></tr>
-      <tr><td><kbd>Shift</kbd></td><td>奔跑</td></tr><tr><td><kbd>空格</kbd></td><td>跳跃</td></tr>
+      <tr><td><kbd>Shift</kbd></td><td>奔跑</td></tr><tr><td><kbd>空格</kbd></td><td>跳跃（屋里和门廊上不能跳）</td></tr>
       <tr><td>鼠标左键 / <kbd>F</kbd></td><td>使用手中的工具（开垦、浇水、播种、抛竿）</td></tr>
-      <tr><td><kbd>E</kbd></td><td>互动：收获成熟的作物、开店、出货、睡觉、装水</td></tr>
+      <tr><td><kbd>E</kbd></td><td>互动：收获成熟的作物、开店、出货、装水、在床边睡觉</td></tr>
       <tr><td>拖动鼠标 / <kbd>Q</kbd><kbd>R</kbd></td><td>旋转视角；滚轮缩放</td></tr>
-      <tr><td><kbd>V</kbd> / 滚轮拉到最近</td><td>切换第一人称：点击画面锁定鼠标后，移动鼠标环顾、准星对准要耕种的地块；<kbd>Esc</kbd> 释放鼠标，再按 <kbd>V</kbd> 或向外滚动滚轮回到第三人称</td></tr>
+      <tr><td><kbd>V</kbd> / 滚轮拉到最近</td><td>切换第一人称：点击画面锁定鼠标后，移动鼠标环顾、准星对准要耕种的地块；<kbd>Esc</kbd> 释放鼠标，再按 <kbd>V</kbd> 或向外滚动滚轮回到第三人称（进屋会自动切到第一人称）</td></tr>
       <tr><td><kbd>1</kbd> – <kbd>9</kbd> / 滚轮+Alt</td><td>切换锄头、水壶、鱼竿和种子</td></tr>
       <tr><td><kbd>Tab</kbd> <kbd>L</kbd> <kbd>M</kbd> <kbd>Esc</kbd></td><td>背包 / 图鉴 / 小地图 / 设置</td></tr></table>
       <h3>🌱 种田</h3>
@@ -437,7 +437,7 @@ export class UI {
       <h3>🎣 钓鱼</h3>
       <p>拿起<b>鱼竿</b>面向水面，<b>按住</b>鼠标左键蓄力，松开抛竿。浮漂轻轻点动是鱼在试探，猛地沉下并出现 <b>“!”</b> 时立刻点击！<br>收线时按住鼠标左键（或空格）让绿条上升、松开下降，尽量让鱼待在绿条里，直到进度条充满。<br>池塘、小河、瀑布下的急流里住着不同的鱼；清晨、傍晚、夜晚和雨天还会有特别的访客。</p>
       <h3>🏡 生活</h3>
-      <p>一天从早上 6 点开始。晚上回到小屋门口按 <kbd>E</kbd> 睡觉，第二天作物会继续生长。熬到凌晨 2 点会累倒哦。<br>沿着小路去探索吧：西边的池塘与木码头、北边的森林和瀑布、南边的拱桥和小河。</p>`);
+      <p>一天从早上 6 点开始。晚上回到木屋，走上二楼卧室，在床边按 <kbd>E</kbd> 睡觉；进屋会自动切换到第一人称，出门恢复原来的视角。熬到凌晨 2 点会累倒哦。<br>沿着小路去探索吧：西边的池塘与木码头、北边的森林和瀑布、南边的拱桥和小河。</p>`);
     this.panel('❓ 玩法说明', body);
   }
   render_sign() {

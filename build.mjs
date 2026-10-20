@@ -22,4 +22,7 @@ let html = readFileSync('index.html', 'utf8')
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/青溪小筑.html', html);
 writeFileSync('dist/index.html', html);
-console.log(`built dist/青溪小筑.html  ${(html.length / 1024).toFixed(0)} KB`);
+const bytes = Buffer.byteLength(html);
+console.log(`built dist/青溪小筑.html  ${(bytes / 1024).toFixed(0)} KB (${bytes} bytes)`);
+if (bytes > 4_800_000) console.warn('warning: above the 4.8 MB target — the two-storey house keeps its 114k-triangle model by decision');
+if (bytes > 4_900_000) console.warn('warning: above the 4.9 MB Notion free-plan safe line');

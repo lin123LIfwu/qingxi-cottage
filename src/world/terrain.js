@@ -272,11 +272,15 @@ export class Terrain {
     }
     return h;
   }
-  onDeck(x, z) {
+  onDeck(x, z, ref) {
     for (const dk of this.decks) {
       const dx = x - dk.cx, dz = z - dk.cz;
       const u = dx * dk.ax + dz * dk.az, v = -dx * dk.az + dz * dk.ax;
-      if (Math.abs(u) <= dk.halfLen && Math.abs(v) <= dk.halfW) return dk;
+      if (Math.abs(u) > dk.halfLen || Math.abs(v) > dk.halfW) continue;
+      const dh = dk.heightFn(u);
+      // upper-floor decks only count when the feet can actually reach them
+      if (dk.upper && !(ref !== undefined && ref > dh - 0.6)) continue;
+      return dk;
     }
     return null;
   }
@@ -320,7 +324,7 @@ export class Terrain {
     const ext = (p, k) => [p[0] + (p[0] - b.cx) / (b.span / 2) * k, p[1] + (p[1] - b.cz) / (b.span / 2) * k];
     const nEnd = ext(north, 0.6), sEnd = ext(south, 0.6);
     this.paths = [
-      [[0.3, -9.4], [0.6, -6], [0.8, -2], [0.2, 6], [-1.6, 15], [-2.6, 23], [nEnd[0], nEnd[1] - 2.5], nEnd],
+      [[1.5, -7.85], [0.6, -6], [0.8, -2], [0.2, 6], [-1.6, 15], [-2.6, 23], [nEnd[0], nEnd[1] - 2.5], nEnd],
       [sEnd, [sEnd[0] - 0.5, sEnd[1] + 4], [-5.5, 52], [-8, 60], [-12, 68]],
       [[0.8, -6.6], [4, -5.3], [8, -5.1], [12, -5.9], [12, -7.4]],
       [[0.2, -7.2], [-3.5, -5.6], [-6.5, -4.5], [-9.4, -3.7]],

@@ -112,11 +112,13 @@ class Game {
     this.rig.sens = S.settings.sens || 1;
     this.rig.onFov = (fov) => this.fx && this.fx.setViewport(this.renderer.getDrawingBufferSize(_sz).y, fov);
     this.rig.onViewRequest = (v, wheel) => { if (this.mode === 'play' && !this.ui.modal) this.setView(v, wheel); };
+    this.rig.onNear = (n) => this.water && this.water.setNear(n);
     this.rig.setFP(S.settings.view === 'first');
     this.vm = new ViewModel(camera, U);
     player.vm = this.vm;
     this.fpVis = false; this.frameNo = 0;
     this.fx = new FX(scene, U, T);
+    this.fx.setHouseMask(this.house.rainMask);
     this.fx.setButterflySpots((veg.flowerSpots || []).filter(s => Math.hypot((s.x ?? s[0]) - 2, (s.z ?? s[1]) + 6) < 45).slice(0, 8));
     this.audio = new AudioSys();
     this.audio.setVolumes({ music: S.settings.music, sfx: S.settings.sfx });
@@ -365,6 +367,7 @@ class Game {
   useTool() {
     const p = this.player, S = this.S;
     if (p.busy() || this.fishing.active || this.seq) return;
+    if (this.house && this.house.indoor) return;   // tools are outdoor only
     const { i, j } = this.targetTile();
     if (this.ripeAt(i, j)) { this.harvest(i, j); return; }
     const s = this.slot();
@@ -517,7 +520,12 @@ class Game {
     if (this.mode !== 'play' || !this.house) return;
     const H = this.house, S = this.S, want = H.indoor || S.settings.view === 'first';
     if (this.rig.fp === want) return;
-    this.rig.setFP(want);
+    if (H.indoor) {
+      // keep the frozen outside camera and route the blend through the door opening
+      this.rig.setFP(true, false, { freeze: true, via: H.portal, yaw: this.player.yaw + Math.PI, pitch: 0.03 });
+    } else {
+      this.rig.setFP(false, false, { freeze: true });
+    }
     this.ui.renderViewState && this.ui.renderViewState();
     if (H.indoor) {
       if (!S.flags) S.flags = {};
@@ -546,7 +554,7 @@ class Game {
   // ------------------------------------------------------------------ day cycle
   askSleep() {
     const h = (this.S.minutes / 60);
-    const text = h < 18 && h >= 6 ? '天还亮着呢，确定现在就睡觉吗？<br><span style="font-size:13px;opacity:.7">作物会在夜里继续生长</span>' : '今天辛苦啦，回小屋睡觉吧？<br><span style="font-size:13px;opacity:.7">作物会在夜里继续生长</span>';
+    const text = h < 18 && h >= 6 ? '天还亮着呢，确定现在就睡觉吗？<br><span style="font-size:13px;opacity:.7">作物会在夜里继续生长</span>' : '今天辛苦啦，躺下好好休息吧？<br><span style="font-size:13px;opacity:.7">作物会在夜里继续生长</span>';
     this.ui.confirm(text, '睡觉 💤', () => this.startSleep(false), '再玩一会儿');
   }
   rollWeather() { const r = Math.random(); return r < 0.55 ? 'sunny' : r < 0.8 ? 'cloudy' : 'rain'; }
@@ -555,7 +563,7 @@ class Game {
     this.fishing.cancel();
     this.seq = { t: 0, passOut, phase: 0 };
     this.sfx('sleep');
-    if (passOut) this.ui.toast('你太累了，迷迷糊糊地走回了小屋……', 'bad');
+    if (passOut) this.ui.toast('你太累了，迷迷糊糊地走回木屋倒在了床上……', 'bad');
   }
   newDay() {
     const S = this.S;
@@ -692,6 +700,8 @@ class Game {
       const crouch = (a === 'plant' || a === 'harvest') ? smoothstep(0, 0.35, u) * (1 - smoothstep(0.7, 1, u))
         : a === 'refill' ? 0.75 * smoothstep(0, 0.3, u) * (1 - smoothstep(0.7, 1, u)) : 0;
       this.rig.update(rdt, p.pos, { rotL: k.q, rotR: k.r }, { speed: p.speed, run: !!k.Shift, walkPhase: p.walkPhase, grounded: p.grounded, crouch, landed: this.landed });
+      // indoors the eye can get closer to walls and furniture: shrink the near plane
+      this.rig.setNear(this.house.indoor && this.mode === 'play' ? 0.08 : 0.15);
       const fpk = this.rig.fpK > 0.5;
       U.uFocus.value.copy(p.pos); U.uFocus.value.y += 1.0; U.uOccR.value = 2.3; U.uOccK.value = fpk ? 0 : 1.0;
       U.uNearF.value.set(fpk ? 0.25 : 1.4, fpk ? 0.6 : 2.8);
@@ -705,6 +715,9 @@ class Game {
       this.vm.root.visible = fpVis;
       if (fpVis) this.vm.drop();
     }
+    // the orbit camera is tight against a wall: hide the body (its shadow stays) instead of
+    // filling the screen with the back of the character
+    p.setTightHide(this.mode === 'play' && this.rig.tpTight && !fpVis);
     if (fpVis) {
       const F = this.fishing;
       this.vm.update(rdt, t, {
@@ -753,6 +766,7 @@ class Game {
       cascadeDist: Math.hypot(p.pos.x - this.T.cascade.x, p.pos.z - this.T.cascade.z),
       pondDist: Math.max(0, Math.hypot(p.pos.x - POND.x, p.pos.z - POND.z) - POND.r),
       forest: this.T.sampleGrid(this.T.forest, p.pos.x, p.pos.z) > 0.35, elev: p.pos.y > 8,
+      indoor: this.house.indoorK,
     });
     // ---- UI ----
     if (this.mode === 'play') this.updatePlayUI(paused);
@@ -810,6 +824,7 @@ class Game {
       const it = this.nearInteract();
       if (ripe) { prompt = `<kbd>E</kbd> 收获 ${CROPS[ripe.crop.type].icon} ${CROPS[ripe.crop.type].name}`; hl = true; }
       else if (it) prompt = `<kbd>E</kbd> ${it.label}`;
+      else if (this.house && this.house.indoor) prompt = null;
       else if (s.id === 'hoe') {
         const c = this.farm.canTill(i, j); ok = c.ok;
         const wt = this.T.waterAt(i + 0.5, j + 0.5); hl = !(wt && wt.depth > 0.02);

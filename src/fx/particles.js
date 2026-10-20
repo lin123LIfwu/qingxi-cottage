@@ -110,8 +110,9 @@ function makeRain(U, n) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 4));
   const m = new THREE.ShaderMaterial({
-    uniforms: { uTime: U.uTime, uRain: U.uRain, uWind: U.uWind, uCam: { value: new THREE.Vector3() }, uSkyAmbient: U.uSkyAmbient, uSunColor: U.uSunColor },
-    vertexShader: /* glsl */`attribute vec4 aSeed; uniform float uTime; uniform float uRain; uniform vec2 uWind; uniform vec3 uCam; varying float vA;
+    uniforms: { uTime: U.uTime, uRain: U.uRain, uWind: U.uWind, uCam: { value: new THREE.Vector3() }, uSkyAmbient: U.uSkyAmbient, uSunColor: U.uSunColor,
+      uHouse: { value: new THREE.Vector4(0, 0, 0, 0) }, uHouseY: { value: -1e9 } },
+    vertexShader: /* glsl */`attribute vec4 aSeed; uniform float uTime; uniform float uRain; uniform vec2 uWind; uniform vec3 uCam; uniform vec4 uHouse; uniform float uHouseY; varying float vA;
       void main(){
         float box = 26.0, H = 16.0;
         float show = step(aSeed.x * 0.999, uRain);
@@ -126,6 +127,9 @@ function makeRain(U, n) {
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
         vA = show * (tail ? 0.0 : 1.0) * smoothstep(0.0, 1.5, y) * smoothstep(H, H - 3.0, y) * smoothstep(0.6, 3.0, -mv.z);
+        // do not draw rain inside the timber house (roof / rooms); rain above the roof still shows
+        float inHouse = step(uHouse.x, p.x) * step(p.x, uHouse.z) * step(uHouse.y, p.z) * step(p.z, uHouse.w) * step(p.y, uHouseY);
+        vA *= 1.0 - inHouse;
       }`,
     fragmentShader: /* glsl */`uniform vec3 uSkyAmbient; uniform vec3 uSunColor; uniform float uRain; varying float vA;
       void main(){ vec3 c = uSkyAmbient * 1.3 + uSunColor * 0.12 + vec3(0.04); gl_FragColor = vec4(c, vA * 0.32 * uRain); }`,
@@ -189,6 +193,11 @@ export class FX {
     const s = hPx / (2 * Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2));
     this.lit.mat.uniforms.uScale.value = s; this.glow.mat.uniforms.uScale.value = s;
   }
+  // rain volume: hide streaks inside the house footprint below the ridge; splashes/insects skip it
+  setHouseMask(m) {
+    const u = this.rain.material.uniforms;
+    u.uHouse.value.set(m.x0, m.z0, m.x1, m.z1); u.uHouseY.value = m.y;
+  }
   setButterflySpots(spots) {
     const R = Math.random;
     this.bfs = [];
@@ -250,6 +259,7 @@ export class FX {
   update(dt, t, ctx) {
     const { camPos, player, env, structures, weather, nightK, dayK, wind } = ctx;
     const T = this.T, R = Math.random;
+    const inHouse = !!(structures && structures.house && structures.house.indoor);
     // chimney smoke
     this.timers.smoke -= dt;
     if (structures && structures.chimneyTop && this.timers.smoke < 0) {
@@ -273,8 +283,8 @@ export class FX {
         if (R() < 0.4) this.lit.spawn(p.x - p.tz * off, lv + 0.2, p.z + p.tx * off, p.tx * 1.5 + (R() - 0.5), 1 + R() * 2, p.tz * 1.5 + (R() - 0.5), 0.6, 0.03, 0.02, 0.9, 0.95, 1, 0.8, 9.8, 0.3, 3, 3, lv);
       }
     }
-    // fireflies at night (not in rain)
-    if (nightK > 0.5 && weather !== 'rain') {
+    // fireflies at night (not in rain, not indoors)
+    if (nightK > 0.5 && weather !== 'rain' && !inHouse) {
       this.timers.fly -= dt;
       if (this.timers.fly < 0) {
         this.timers.fly = 0.12;
@@ -285,8 +295,8 @@ export class FX {
         this.glow.spawn(x, base + 0.4 + R() * 1.6, z, (R() - 0.5) * 0.3, (R() - 0.5) * 0.1, (R() - 0.5) * 0.3, 6 + R() * 6, 0.09, 0.09, 1.6, 2.6, 0.6, 1, 0, 0.0, 0, 1);
       }
     }
-    // pollen motes by day
-    if (dayK > 0.6 && weather === 'sunny') {
+    // pollen motes by day (not indoors)
+    if (dayK > 0.6 && weather === 'sunny' && !inHouse) {
       this.timers.mote -= dt;
       if (this.timers.mote < 0) {
         this.timers.mote = 0.25;
@@ -299,7 +309,7 @@ export class FX {
     const rain = this.U.uRain.value;
     this.rain.material.uniforms.uCam.value.copy(camPos);
     this.rain.visible = rain > 0.01;
-    if (rain > 0.2) {
+    if (rain > 0.2 && !inHouse) {
       this.timers.rain -= dt;
       while (this.timers.rain < 0) {
         this.timers.rain += 0.02 / rain;

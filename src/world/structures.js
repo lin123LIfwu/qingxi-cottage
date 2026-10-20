@@ -371,7 +371,7 @@ export class Structures {
     void BW; void R;
     // flower pots near porch steps
     const pots = new GeoBuilder();
-    for (const [x, z, c] of [[-1.15, -7.75, '#ff7aa2'], [1.15, -7.75, '#ffd34d']]) {
+    for (const [x, z, c] of [[0.30, -7.80, '#ff7aa2'], [2.70, -7.80, '#ffd34d']]) {
       const y = HOME_H;
       pots.add(new THREE.CylinderGeometry(0.2, 0.15, 0.32, 10), { pos: [x, y + 0.16, z], color: '#c26a45' });
       pots.add(new THREE.IcosahedronGeometry(0.22, 1), { pos: [x, y + 0.42, z], scale: [1, 0.75, 1], color: '#4f8f3a' });

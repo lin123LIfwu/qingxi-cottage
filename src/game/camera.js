@@ -6,6 +6,23 @@ const FOV_TP = 50, FOV_FP = 66;
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3(), _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
 
+// Walk the ray from the player towards the orbit camera and stop at the first blocker.  Fine
+// steps near the target catch a wall right behind the player before the camera is pushed into it.
+export function occludeDist(target, dir, dist, blockers) {
+  for (let s = 0.2; s < dist; s += s < 1.2 ? 0.1 : 0.2) {
+    const x = target.x + dir.x * s, y = target.y + dir.y * s, z = target.z + dir.z * s;
+    for (const b of blockers) if (x > b[0] && x < b[3] && y > b[1] && y < b[4] && z > b[2] && z < b[5]) return Math.max(0.3, s - 0.15);
+  }
+  return dist;
+}
+
+// Two-segment path used when the view mode changes at the house door: the first half goes from
+// the frozen start to `via` (the door opening), the second half from `via` to the moving eye.
+export function blendPos(out, from, via, to, k) {
+  if (k < 0.5) return out.lerpVectors(from, via, smoothstep(0, 1, k * 2));
+  return out.lerpVectors(via, to, smoothstep(0, 1, (k - 0.5) * 2));
+}
+
 // Third-person orbit camera + first-person eye camera, with a short blend between the two.
 export class CameraRig {
   constructor(camera, dom, T) {
@@ -13,6 +30,8 @@ export class CameraRig {
     this.yaw = 0.35; this.pitch = 0.38; this.dist = 8.5; this.tDist = 8.5;
     this.target = new THREE.Vector3(); this.inited = false;
     this.blockers = [];
+    this.blend = null; this.tpTight = false;
+    this.near = camera.near; this.onNear = null;
     this.drag = null; this.onClick = null; this.onPress = null; this.onRelease = null;
     this.enabled = true;
     // first person
@@ -92,16 +111,34 @@ export class CameraRig {
   }
   // mouse look falls back to dragging when the pointer cannot be locked (e.g. inside some iframes)
   get dragLook() { return this.fp && !this.canLock(); }
-  setFP(on, fromWheel) {
+  setFP(on, fromWheel, opts = {}) {
     if (this.fp === on) return;
+    const was = this.fp;
     this.fp = on;
-    if (on) { this.fpPitch = clamp(this.pitch * 0.45, 0.05, 0.4); this.lastPitch = this.fpPitch; }
-    else {
+    if (on) {
+      this.fpPitch = opts.pitch !== undefined ? opts.pitch : clamp(this.pitch * 0.45, 0.05, 0.4);
+      this.lastPitch = this.fpPitch;
+      if (opts.yaw !== undefined) this.yaw = opts.yaw;
+      // entering the house: freeze the outside camera and route the blend through the door
+      if (opts.via) {
+        this.blend = { from: this.cam.position.clone(), fromQ: this.cam.quaternion.clone(), via: new THREE.Vector3().copy(opts.via) };
+      }
+    } else {
       this.exitLock();
       if (fromWheel) { this.tDist = 3.6; this.dist = Math.min(this.dist, 3.6); this.zoomAt = performance.now(); }
+      // leaving the house: start from the eye we just left instead of the orbit camera
+      if (opts.freeze || was) {
+        this.blend = { from: this.cam.position.clone(), fromQ: this.cam.quaternion.clone(), via: null };
+      }
     }
   }
   isDragging() { return this.drag && this.drag.moved; }
+  // near plane depends on the space: indoor corners of the view frustum must not cut walls
+  setNear(n) {
+    if (Math.abs(this.near - n) < 1e-4) return;
+    this.near = n; this.cam.near = n; this.cam.updateProjectionMatrix();
+    this.onNear && this.onNear(n);
+  }
   // o: { speed, run, walkPhase, grounded, crouch (0..1), landed (bool) }
   update(dt, focus, keys, o = {}) {
     if (keys) {
@@ -116,13 +153,9 @@ export class CameraRig {
     this.target.y = damp(this.target.y, tgt.y, 6, dt);
     this.dist = damp(this.dist, this.tDist, 8, dt);
     const dir = new THREE.Vector3(Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), Math.cos(this.yaw) * Math.cos(this.pitch));
-    let d = this.dist;
-    for (let s = 0.6; s < d; s += 0.2) {
-      const p = this.target.clone().addScaledVector(dir, s);
-      let hit = false;
-      for (const b of this.blockers) if (p.x > b[0] && p.x < b[3] && p.y > b[1] && p.y < b[4] && p.z > b[2] && p.z < b[5]) { hit = true; break; }
-      if (hit) { d = Math.max(0.8, s - 0.25); break; }
-    }
+    // fine sampling, camera may come as close as 0.3 m (main.js hides the body when tight)
+    const d = occludeDist(this.target, dir, this.dist, this.blockers);
+    this.tpTight = d < 0.75 ? true : d > 0.9 ? false : this.tpTight;
     const pos = this.tpPos.copy(this.target).addScaledVector(dir, d);
     const gh = this.T.heightAt(pos.x, pos.z);
     let minY = gh + 0.45;
@@ -131,7 +164,7 @@ export class CameraRig {
     if (pos.y < minY) pos.y = minY;
     _m.lookAt(pos, this.target, UP); this.tpQuat.setFromRotationMatrix(_m);
     // ---- first person ----
-    if (snap) { this.fpK = this.fp ? 1 : 0; }
+    if (snap) { this.fpK = this.fp ? 1 : 0; this.blend = null; }
     else this.fpK = clamp(this.fpK + (this.fp ? dt : -dt) / 0.45, 0, 1);
     const k = this.fpK > 0 && this.fpK < 1 ? smoothstep(0, 1, this.fpK) : this.fpK;
     const mv = (o.grounded !== false) ? smoothstep(0.3, 3.0, o.speed || 0) : 0;
@@ -145,9 +178,18 @@ export class CameraRig {
     const lat = Math.sin(ph) * 0.014 * mv;
     this.eye.set(focus.x + Math.cos(this.yaw) * lat, focus.y + EYE_H + this.bobY - this.crouch * 0.42 - dip, focus.z - Math.sin(this.yaw) * lat);
     _q2.setFromEuler(_e.set(-this.fpPitch, this.yaw, 0, 'YXZ'));
-    if (k <= 0) { this.cam.position.copy(pos); this.cam.quaternion.copy(this.tpQuat); }
-    else if (k >= 1) { this.cam.position.copy(this.eye); this.cam.quaternion.copy(_q2); }
-    else {
+    if (k <= 0) {
+      this.cam.position.copy(pos); this.cam.quaternion.copy(this.tpQuat);
+      if (!this.fp) this.blend = null;
+    } else if (k >= 1) {
+      this.cam.position.copy(this.eye); this.cam.quaternion.copy(_q2);
+      if (this.fp) this.blend = null;
+    } else if (this.blend) {
+      // frozen start: enter through the door opening, leave from the eye we just left
+      if (this.blend.via) blendPos(this.cam.position, this.blend.from, this.blend.via, this.eye, k);
+      else this.cam.position.lerpVectors(this.blend.from, pos, smoothstep(0, 1, k));
+      this.cam.quaternion.slerpQuaternions(this.blend.fromQ, this.fp ? _q2 : this.tpQuat, smoothstep(0, 1, k));
+    } else {
       this.cam.position.lerpVectors(pos, this.eye, k);
       this.cam.quaternion.slerpQuaternions(this.tpQuat, _q2, k);
     }
