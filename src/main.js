@@ -150,9 +150,9 @@ class Game {
     this.titleCamera(0);
     {
       const vm = this.vm; vm.root.visible = true;
-      for (const k in vm.T) vm.T[k].g.visible = true;
+      vm.warmup(true);
       try { renderer.compile(scene, camera); } catch (e) { /* ignore */ }
-      for (const k in vm.T) vm.T[k].g.visible = vm.shown === k;
+      vm.warmup(false);
       vm.root.visible = false;
     }
     this.pipeline.render(this.env.exposure, 0);

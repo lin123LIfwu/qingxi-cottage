@@ -2,6 +2,7 @@
 // loadModels() must finish before the player / view model are built.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 // pure-JS meshopt decoder: no WebAssembly, so the game also loads under strict CSP hosts
 import { MeshoptDecoder } from '../util/meshoptDecoder.js';
 import HOE from './hoe.glb.js';
@@ -74,14 +75,19 @@ export async function loadModels(renderer) {
     if (m.roughnessMap && !m.aoMap) { m.aoMap = m.roughnessMap; m.aoMapIntensity = 0.6; }
   });
   setupFarmer(MODELS.farmer);
+  // a second, independent skeleton for the first-person arms, copied while still in the rest pose
+  // (the player poses the main instance as soon as it is built)
+  MODELS.farmerFP = cloneSkinned(MODELS.farmer);
   await Promise.all(Object.keys(ICONS).map(k => cropIcon(k)));
 }
 
 // a deep copy of a tool model (geometry + materials shared with the original)
 export function toolModel(key) { return MODELS[key].clone(true); }
 
-// The farmer is a skinned mesh: the game uses the single loaded instance (no clone).
+// The farmer is a skinned mesh: the game uses the single loaded instance; the first-person view
+// model gets its own skeleton (SkeletonUtils clone: geometry, materials and textures shared).
 export function farmerModel() { return MODELS.farmer; }
+export function farmerArmsModel() { return MODELS.farmerFP; }
 
 function setupFarmer(root) {
   root.traverse(o => {

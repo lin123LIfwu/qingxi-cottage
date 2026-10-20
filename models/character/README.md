@@ -65,7 +65,7 @@ $B -b out/farmer.blend -P pack_blend.py -- out/farmer_packed.blend /tmp/farmer_t
 
 - `src/assets/models.js`：`farmerModel()` 返回加载好的人物（蒙皮网格关闭视锥剔除；头发 alpha test，眉毛 / 睫毛半透明且不投影）。
 - `src/game/player.js`：把人物挂到玩家节点下，四件工具用 `human.holdTool()` 放进右手；第一人称时人物换成“不写颜色、不写深度”的材质副本——看不见身体，但影子（连同头发的镂空）照样投在地上。
-- `src/game/viewmodel.js`：第一人称的手和前臂（短袖，肤色按人物皮肤贴图取样）。
+- `src/game/fpArms.js`：第一人称的手臂——`models.js` 在人物刚加载时用 `SkeletonUtils.clone` 克隆的第二份人物（`farmerArmsModel()`），只保留按蒙皮权重切出的两条手臂（皮肤 + T 恤袖子），用下面同一套两段 IK 和手指弯曲摆到工具上；`src/game/viewmodel.js` 负责手势和手里的工具。
 
 ## 动画系统（`src/game/human.js`）
 

@@ -1,18 +1,16 @@
-// First-person "view model": the farmer's hands and whatever they are holding.
+// First-person "view model": the farmer's own arms (fpArms.js) and whatever they are holding.
 //
 // The whole group is parented to the camera, so it moves rigidly with the view. A one-line
 // vertex patch squeezes these meshes into the front few percent of the depth range: they can
 // never poke into a fence post or a tree trunk, yet they are still lit and shadowed by the real
 // sun (their world position really is just in front of the eyes).
 import * as THREE from 'three';
-import { GeoBuilder } from '../util/geo.js';
-import { clamp, lerp, smoothstep, damp } from '../util/math.js';
+import { clamp, lerp, smoothstep } from '../util/math.js';
 import { toolModel, cropIconNow } from '../assets/models.js';
+import { FPArms } from './fpArms.js';
 
-const _e = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _c = new THREE.Color();
+const _e = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion();
 const UP = new THREE.Vector3(0, 1, 0);
-// matched to the third-person character's skin texture (MakeHuman young_asian_male skin, sRGB)
-const SKIN = '#d6aa8c', SKIN_D = '#c39074';
 
 export function vmPatch(mat, U) {
   mat.onBeforeCompile = (sh) => {
@@ -36,49 +34,18 @@ totalEmissiveRadiance += diffuseColor.rgb * uSunColor * 0.05;`);
   return mat;
 }
 
-const geo = (fn) => { const B = new GeoBuilder(); fn(B); return B.build(); };
 const quat = (rx, ry, rz, tw = 0) => {
   const q = new THREE.Quaternion().setFromEuler(_e.set(rx, ry, rz, 'YXZ'));
   return tw ? q.multiply(_q.setFromAxisAngle(UP, tw)) : q;
 };
-// pose: grip position, tool orientation (Euler YXZ + twist about the handle), elbow position (all camera space)
+// pose: grip position, tool orientation (Euler YXZ + twist about the handle), elbow hint (all camera space)
 const P = (x, y, z, rx = 0, ry = 0, rz = 0, tw = 0, e = [0.34, -0.58, -0.1]) => ({ p: new THREE.Vector3(x, y, z), q: quat(rx, ry, rz, tw), e: new THREE.Vector3(...e) });
 const ease = (x) => x * x * (3 - 2 * x);
 function mixPose(a, b, t, out) { out.p.lerpVectors(a.p, b.p, t); out.q.slerpQuaternions(a.q, b.q, t); out.e.lerpVectors(a.e, b.e, t); return out; }
 function copyPose(a, out) { out.p.copy(a.p); out.q.copy(a.q); out.e.copy(a.e); return out; }
 // out = a ∘ b (b expressed in a's frame)
 function compose(a, b, out) { out.p.copy(b.p).applyQuaternion(a.q).add(a.p); out.q.multiplyQuaternions(a.q, b.q); return out; }
-
-// ------------------------------------------------------------------ geometry
-function handGeometry() {
-  // grip axis = +Y (index finger on top), back of the hand = +X, knuckles = -Z, wrist towards +Z
-  return geo(B => {
-    B.add(new THREE.SphereGeometry(1, 14, 10), { pos: [0.017, -0.002, 0.01], scale: [0.029, 0.046, 0.039], color: SKIN });
-    // the four curled fingers as one smooth band wrapped round the grip, with faint creases
-    B.add(new THREE.TorusGeometry(0.026, 0.0158, 10, 20, Math.PI * 1.5), {
-      pos: [0, -0.001, 0], rot: [-Math.PI / 2, 0.15, 0], scale: [1, 1, 2.35], color: SKIN,
-      colorFn: (c, x, y, z) => {
-        const f = ((y + 0.0374) % 0.0187 + 0.0187) % 0.0187, d = Math.abs(f - 0.00935) / 0.00935;
-        c.multiplyScalar(1 - 0.16 * smoothstep(0.75, 1, d));
-        if (x > 0.012 && z < 0) c.lerp(_c.set(SKIN_D), 0.35);
-      },
-    });
-    B.add(new THREE.SphereGeometry(1, 12, 8), { pos: [-0.008, 0.041, -0.01], scale: [0.0125, 0.0115, 0.031], rot: [0.1, 0.95, 0], color: SKIN });
-    B.add(new THREE.SphereGeometry(0.0105, 10, 8), { pos: [-0.027, 0.037, -0.026], color: SKIN_D });
-    B.add(new THREE.CylinderGeometry(0.025, 0.027, 0.075, 12), { pos: [0.018, -0.016, 0.042], rot: [Math.PI / 2 - 0.28, 0, 0], color: SKIN });
-  });
-}
-const WRIST = new THREE.Vector3(0.018, -0.026, 0.075);
-
-function forearmGeometry() {
-  // unit length along +Y: y=0 at the wrist, y=1 at the elbow. Short-sleeved tee: bare skin all
-  // the way, a little fuller over the forearm muscles, slightly darker on the inner side
-  return geo(B => {
-    B.add(new THREE.CylinderGeometry(0.047, 0.028, 1.04, 18, 8, true), { pos: [0, 0.52, 0], color: SKIN,
-      warp: (x, y, z) => { const u = clamp(y / 1.04, 0, 1), k = 1 + 0.13 * Math.sin(Math.min(1, u / 0.75) * Math.PI) * (x > 0 ? 1 : 0.6); return [x * k, y, z * k * 0.9]; },
-      colorFn: (c, x) => { if (x < 0) c.lerp(_c.set(SKIN_D), 0.2); } });
-  });
-}
+function invPose(a) { const q = a.q.clone().invert(); return { p: a.p.clone().applyQuaternion(q).negate(), q }; }
 
 // ------------------------------------------------------------------ tools
 // The tools are the Blender models (src/assets): each one was built in the same frame as the
@@ -129,22 +96,28 @@ const POSE = {
     strike: P(0.27, -0.1, -0.46, -1.956, 0.304, 0, 0, [0.42, -0.53, -0.15]),
   },
   can: {
-    idle: P(0.29, -0.16, -0.55, 0.05, 0.42, 0.03, 0, [0.38, -0.46, -0.1]),
-    pour: P(0.2, -0.11, -0.62, -0.7, 0.3, 0.1, 0, [0.42, -0.38, -0.2]),
-    dip: P(0.22, -0.55, -0.62, -0.9, 0.35, 0, 0, [0.33, -0.76, -0.2]),
+    idle: P(0.27, -0.15, -0.5, 0.05, 0.42, 0.03, 0, [0.38, -0.46, -0.1]),
+    pour: P(0.21, -0.11, -0.47, -0.7, 0.3, 0.1, 0, [0.42, -0.38, -0.2]),
+    dip: P(0.22, -0.5, -0.42, -0.9, 0.35, 0, 0, [0.33, -0.76, -0.2]),
   },
   rod: {
     idle: P(0.24, -0.25, -0.46, -1.0, 0.16, -0.06, 0, [0.34, -0.55, -0.1]),
     back: P(0.27, -0.03, -0.36, 0.25, 0.1, -0.1, 0, [0.4, -0.3, -0.05]),
-    cast: P(0.21, -0.23, -0.52, -1.24, 0.08, 0, 0, [0.32, -0.52, -0.15]),
-    fish: P(0.21, -0.23, -0.5, -1.12, 0.1, -0.02, 0, [0.32, -0.52, -0.14]),
+    cast: P(0.16, -0.17, -0.43, -1.24, 0.08, 0, 0, [0.32, -0.52, -0.15]),
+    fish: P(0.15, -0.17, -0.41, -1.12, 0.1, -0.02, 0, [0.32, -0.52, -0.14]),
   },
   seeds: {
     idle: P(0.2, -0.22, -0.4, -0.12, -0.35, 0.12, 0, [0.3, -0.5, -0.1]),
     sow: P(0.19, -0.25, -0.52, -1.0, -0.2, 0.25, 0, [0.32, -0.6, -0.2]),
   },
 };
-const ELBOW_L = new THREE.Vector3(-0.26, -0.58, -0.12), ELBOW_CRANK = new THREE.Vector3(-0.13, -0.6, -0.16);
+// left-hand elbow hints; the left hand's parking spot below the view (it rises from there)
+const ELBOW_L = new THREE.Vector3(-0.45, -0.4, -0.12), ELBOW_CRANK = new THREE.Vector3(-0.2, -0.6, -0.16);
+const LOW_L = new THREE.Vector3(-0.16, -0.62, -0.3);
+// finger / thumb curl round each tool's grip (the third-person carry values, human.js CARRY)
+const CURL = { hoe: [0.8, 0.65], can: [0.85, 0.5], rod: [0.74, 0.55], seeds: [0.5, 0.75] };
+// presenting a fish: palms up under it, fingers forward and a little inwards
+const FISH_R = quat(0, 0.3, -Math.PI / 2), FISH_L = quat(0, -0.3, Math.PI / 2), KNOB_Q = quat(-0.25, -0.35, -Math.PI / 2);
 
 export class ViewModel {
   constructor(camera, U) {
@@ -152,26 +125,21 @@ export class ViewModel {
     this.root = new THREE.Group(); this.root.name = 'viewmodel'; this.root.visible = false;
     camera.add(this.root);
     this.rig = new THREE.Group(); this.root.add(this.rig);
-    const M = this.M = {
-      skin: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.58, metalness: 0 }), U),
-      cloth: vmPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 }), U),
-    };
-    // hands & forearms
-    const hg = handGeometry(), fg = forearmGeometry();
-    this.handR = new THREE.Mesh(hg, M.skin); this.handL = new THREE.Mesh(hg, M.skin); this.handL.scale.x = -1;
-    this.armR = new THREE.Mesh(fg, M.skin); this.armL = new THREE.Mesh(fg, M.skin);
-    for (const o of [this.handR, this.handL, this.armR, this.armL]) this.rig.add(o);
+    // the farmer's own arms
+    this.arms = new FPArms((m) => vmPatch(m, U));
+    this.rig.add(this.arms.root);
     // tools
     this.toolG = new THREE.Group(); this.rig.add(this.toolG);
     const mc = new Map();
     this.T = { hoe: buildHoe(U, mc), can: buildCan(U, mc), rod: buildRod(U, mc), seeds: buildSeeds(U, mc) };
-    for (const k in this.T) { this.T[k].g.visible = false; this.toolG.add(this.T[k].g); }
+    for (const k in this.T) { const T = this.T[k]; T.g.visible = false; T.gripRi = invPose(T.gripR); this.toolG.add(T.g); }
     this.fishG = new THREE.Group(); this.rig.add(this.fishG);
     this.rig.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = false; } });
     // state
     this.shown = 'none'; this.lowerK = 1; this.sway = new THREE.Vector2(); this.runK = 0; this.airY = 0; this.landT = 1;
-    this.wasGrounded = true; this.crankA = 0; this.bend = 0; this.offK = 1; this.offX = 0.05;
+    this.wasGrounded = true; this.crankA = 0; this.bend = 0; this.offK = 1; this.offX = 0.05; this.lK = 0;
     this.pose = P(0, 0, 0); this.tmpA = P(0, 0, 0); this.tmpB = P(0, 0, 0); this.hR = P(0, 0, 0); this.hL = P(0, 0, 0); this.lFree = P(0, 0, 0);
+    this.sock = P(0, 0, 0);
     this.fish = null;
   }
   swapTo(k) {
@@ -179,6 +147,11 @@ export class ViewModel {
     if (this.T[this.shown]) this.T[this.shown].g.visible = false;
     this.shown = k;
     if (this.T[k]) this.T[k].g.visible = true;
+  }
+  // everything visible at once, so the renderer can compile every shader up front
+  warmup(on) {
+    for (const k in this.T) this.T[k].g.visible = on || this.shown === k;
+    this.arms.showAll(on);
   }
   // keep the hands clear of the hotbar (fixed-size, bottom centre): on narrow windows it covers
   // more of the screen, so the whole rig slides a little further right
@@ -235,6 +208,7 @@ export class ViewModel {
   update(dt, t, s) {
     const snap = !!s.snap;
     const R = (k) => snap ? 1 : 1 - Math.exp(-k * dt);
+    const a = s.action, u = clamp(s.u || 0, 0, 1);
     // ---- tool switching: lower, swap, raise ----
     const want = s.tool in this.T ? s.tool : 'none';
     if (snap) { this.swapTo(want); this.lowerK = 0; }
@@ -242,7 +216,7 @@ export class ViewModel {
       this.lowerK = Math.min(1, this.lowerK + dt / 0.13);
       if (this.lowerK >= 1) this.swapTo(want);
     } else this.lowerK = Math.max(0, this.lowerK - dt / 0.2);
-    const tool = this.shown, a = s.action, u = clamp(s.u || 0, 0, 1);
+    const tool = this.shown;
     // ---- body motion: bob, sway, run, jump ----
     const k = s.grounded ? smoothstep(0.3, 3.0, s.speed) : 0;
     const ph = s.walkPhase, run = s.run && s.speed > 4.5;
@@ -258,13 +232,14 @@ export class ViewModel {
     this.airY = lerp(this.airY, s.grounded ? 0 : clamp(-(s.vy || 0) * 0.006, -0.035, 0.035), R(10));
     const lw = ease(this.lowerK), br = Math.sin(t * 1.7);
     // the caught fish is shown dead centre; everything else sits right of the hotbar
-    this.offK = lerp(this.offK, s.action === 'showfish' && this.fish ? 0 : 1, R(8));
+    const fishing = a === 'showfish' && this.fish;
+    this.offK = lerp(this.offK, fishing ? 0 : 1, R(8));
     const ox = this.offX * this.offK, oy = 0.03 * this.offK;
     this.rig.position.set(bobX + this.sway.x * 0.35 + ox, bobY + this.airY - land - lw * 0.32 - this.runK * 0.03 + br * 0.003 + oy, this.runK * 0.02);
     this.rig.rotation.set(this.sway.y - lw * 0.55 - this.runK * 0.1 + br * 0.004, this.sway.x, Math.sin(ph) * 0.012 * k - this.runK * 0.06, 'YXZ');
     // ---- tool pose ----
     const pose = this.pose;
-    let showR = tool !== 'none', showL = false, lFree = null;
+    let showR = tool !== 'none', showL = false, lFree = null, lc = 0.55, lth = 0.5;
     const T = this.T[tool];
     if (tool === 'hoe') {
       const A = POSE.hoe;
@@ -314,61 +289,68 @@ export class ViewModel {
         pose.q.multiply(_q);
       } else copyPose(A.idle, pose);
     }
-    // harvesting: the free left hand reaches down and pulls; the tool dips out of the way
+    // harvesting: the free left hand reaches down, closes round the crop and pulls; the tool dips
+    // out of the way
     if (a === 'harvest') {
       const dn = smoothstep(0, 0.35, u) * (1 - smoothstep(0.75, 1, u)), pull = smoothstep(0.45, 0.65, u) * (1 - smoothstep(0.8, 1, u));
       pose.p.y -= 0.2 * dn; pose.p.x += 0.06 * dn;
       lFree = this.lFree; lFree.e.copy(ELBOW_L);
-      lFree.p.set(lerp(-0.3, -0.06, ease(dn)), lerp(-0.62, -0.25, ease(dn)) + 0.1 * pull, lerp(-0.42, -0.53, ease(dn)) + 0.08 * pull);
-      lFree.q.setFromEuler(_e.set(-0.6 - 0.5 * dn, -0.5, -1.2, 'YXZ'));
+      lFree.p.set(lerp(-0.3, -0.06, ease(dn)), lerp(-0.62, -0.26, ease(dn)) + 0.1 * pull, lerp(-0.36, -0.46, ease(dn)) + 0.08 * pull);
+      lFree.q.setFromEuler(_e.set(-0.5 - 0.4 * dn, -0.3, -0.6, 'YXZ'));
+      const grab = smoothstep(0.33, 0.43, u) * (1 - smoothstep(0.85, 1, u));
+      lc = lerp(0.35, 0.95, grab); lth = lerp(0.3, 0.75, grab);
       showL = dn > 0.02;
     }
-    // presenting a caught fish with both hands
-    if (a === 'showfish' && this.fish) {
+    const arms = this.arms;
+    if (fishing) {
+      // presenting a caught fish with both hands, palms up
       const up = smoothstep(0, 0.13, u), dn = smoothstep(0.86, 1, u);
-      const y = lerp(-0.62, -0.06, ease(up)) - 0.6 * ease(dn) + Math.sin(u * 30) * 0.006 * up;
+      const y = lerp(-0.62, -0.08, ease(up)) - 0.6 * ease(dn) + Math.sin(u * 30) * 0.006 * up;
       const f = this.fishSize || 0.3;
       this.fishG.visible = true;
-      this.fishG.position.set(0.02, y, -0.5 - f * 0.35);
+      this.fishG.position.set(0.02, y, -0.42 - f * 0.14);
       this.fishG.rotation.set(-0.35 + Math.sin(t * 3) * 0.04, 0.12, Math.sin(u * 20) * 0.05 * up, 'YXZ');
-      showR = false; showL = false;
+      this.toolG.visible = false;
       this.fishG.updateMatrix();
       const span = Math.max(0.07, f * 0.3);
-      this.hR.p.set(span, -0.05 - f * 0.08, 0.02).applyMatrix4(this.fishG.matrix); this.hR.q.copy(this.fishG.quaternion).multiply(quat(0.2, 0, 1.75));
-      this.hL.p.set(-span, -0.05 - f * 0.08, 0.02).applyMatrix4(this.fishG.matrix); this.hL.q.copy(this.fishG.quaternion).multiply(quat(0.2, 0, 1.75));
-      this.hR.e.set(0.3, -0.55, -0.1); this.hL.e.set(-0.3, -0.55, -0.1);
-      this.placeHand(this.handR, this.armR, this.hR);
-      this.placeHand(this.handL, this.armL, this.hL);
-    } else this.fishG.visible = false;
-    if (a !== 'showfish' || !this.fish) {
-      // tool + right hand
+      this.hR.p.set(span, -0.035 - f * 0.08, 0.02).applyMatrix4(this.fishG.matrix); this.hR.q.copy(this.fishG.quaternion).multiply(FISH_R);
+      this.hL.p.set(-span, -0.035 - f * 0.08, 0.02).applyMatrix4(this.fishG.matrix); this.hL.q.copy(this.fishG.quaternion).multiply(FISH_L);
+      this.hR.e.set(0.34, -0.55, -0.12); this.hL.e.set(-0.34, -0.55, -0.12);
+      arms.arm(1, this.hR, 0.3, 0.2);
+      arms.arm(0, this.hL, 0.3, 0.2);
+      this.lK = 0;
+    } else {
+      this.fishG.visible = false;
+      // right hand on the tool: the tool goes where the hand actually got to
       this.toolG.visible = tool !== 'none';
-      this.toolG.position.copy(pose.p); this.toolG.quaternion.copy(pose.q);
-      if (showR && T) { compose(pose, T.gripR, this.hR); this.hR.e.copy(pose.e); this.placeHand(this.handR, this.armR, this.hR); }
-      else this.placeHand(this.handR, this.armR, null);
-      if (showL) {
-        if (lFree) copyPose(lFree, this.hL);
-        else if (tool === 'hoe') { compose(pose, T.gripL, this.hL); this.hL.e.set(-0.28, -0.6, -0.12); }
-        else if (tool === 'rod') {
-          // left hand on the reel crank knob
-          _v.copy(T.knob).applyAxisAngle(_v2.set(1, 0, 0), T.crank.rotation.x).add(T.crank.position);
-          this.tmpA.p.copy(_v); this.tmpA.q.copy(quat(T.crank.rotation.x * 0, 0, Math.PI / 2));
-          compose(pose, this.tmpA, this.hL);
-          this.hL.p.x -= 0.015; this.hL.e.copy(ELBOW_CRANK);
-        }
-        this.placeHand(this.handL, this.armL, this.hL);
-      } else this.placeHand(this.handL, this.armL, null);
-    } else this.toolG.visible = false;
+      const toolP = this.toolG.position, toolQ = this.toolG.quaternion;
+      if (showR && T) {
+        compose(pose, T.gripR, this.hR); this.hR.e.copy(pose.e);
+        const c = CURL[tool];
+        arms.arm(1, this.hR, c[0], c[1], this.sock);
+        compose(this.sock, T.gripRi, this.tmpA);
+        toolP.copy(this.tmpA.p); toolQ.copy(this.tmpA.q);
+      } else {
+        arms.arm(1, null);
+        toolP.copy(pose.p); toolQ.copy(pose.q);
+      }
+      // left hand: rises in from below, onto the reel's crank knob or down to the crop
+      this.lK = snap ? (showL ? 1 : 0) : clamp(this.lK + (showL ? dt : -dt) / 0.16, 0, 1);
+      let lt = null;
+      if (lFree) lt = copyPose(lFree, this.hL);
+      else if (tool === 'rod' && this.lK > 0) {
+        _v.copy(T.knob).applyAxisAngle(_v2.set(1, 0, 0), T.crank.rotation.x).add(T.crank.position);
+        lt = this.hL;
+        lt.p.copy(_v).applyQuaternion(toolQ).add(toolP);
+        lt.q.copy(KNOB_Q).multiply(_q.setFromAxisAngle(_v2.set(0, 0, 1), Math.sin(T.crank.rotation.x) * 0.12));
+        lt.p.x -= 0.012; lt.e.copy(ELBOW_CRANK);
+        const w = ease(this.lK);
+        lt.p.lerpVectors(LOW_L, lt.p, w);
+      }
+      if (lt && (lFree ? showL : this.lK > 0)) arms.arm(0, lt, lc, lth);
+      else arms.arm(0, null);
+    }
+    arms.end();
     this.root.updateMatrixWorld(true);
-  }
-  // hand mesh at pose h; the forearm runs from its wrist to the pose's elbow point
-  placeHand(hand, arm, h) {
-    if (!h) { hand.visible = false; arm.visible = false; return; }
-    hand.visible = arm.visible = true;
-    hand.position.copy(h.p); hand.quaternion.copy(h.q);
-    const w = _v.copy(WRIST); if (hand === this.handL) w.x = -w.x;   // the left hand is the mirrored mesh
-    w.applyQuaternion(h.q).add(h.p);
-    const d = _v2.copy(h.e).sub(w); const L = d.length();
-    arm.position.copy(w); arm.quaternion.setFromUnitVectors(UP, d.multiplyScalar(1 / Math.max(L, 1e-4))); arm.scale.set(1, L, 1);
   }
 }
