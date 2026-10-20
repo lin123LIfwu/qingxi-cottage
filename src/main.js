@@ -5,7 +5,7 @@ import { bakeTextures } from './gen/texgen.js';
 import { buildLeafAtlas } from './gen/leafgen.js';
 import { Colliders } from './world/colliders.js';
 import { Vegetation } from './world/vegetation.js';
-import { loadModels } from './assets/models.js';
+import { loadModels, MODELS } from './assets/models.js';
 import { Environment } from './world/environment.js';
 import { Water } from './world/water.js';
 import { Structures } from './world/structures.js';
@@ -99,12 +99,16 @@ class Game {
     scene.add(veg.group);
     loading.set('正在叫醒小镇居民……', 0.86); await nextFrame();
     await loadModels(renderer);
+    const house = this.house = st.house;
+    house.attach(MODELS.house, renderer);
+    house.onDoor = (open) => this.audio && this.mode === 'play' && this.sfx('door', open ? 0.55 : 0.4);
     const player = this.player = new Player(T, col, U);
+    player.house = house;
     scene.add(player.root);
     const P = S.player;
-    if (P && isFinite(P.x)) player.place(P.x, P.z, P.yaw); else player.place(SPAWN.x, SPAWN.z, 0);
+    if (P && isFinite(P.x)) player.place(P.x, P.z, P.yaw, isFinite(P.y) ? P.y : undefined); else player.place(SPAWN.x, SPAWN.z, 0);
     this.rig = new CameraRig(camera, renderer.domElement, T);
-    this.rig.blockers = [[-4.2, 0, -16.6, 4.2, 9.5, -8.4], [SHOP.x - 1.5, 0, SHOP.z - 0.8, SHOP.x + 1.5, 4.2, SHOP.z + 0.9]];
+    this.rig.blockers = [...house.blockers, [SHOP.x - 1.5, 0, SHOP.z - 0.8, SHOP.x + 1.5, 4.2, SHOP.z + 0.9]];
     this.rig.sens = S.settings.sens || 1;
     this.rig.onFov = (fov) => this.fx && this.fx.setViewport(this.renderer.getDrawingBufferSize(_sz).y, fov);
     this.rig.onViewRequest = (v, wheel) => { if (this.mode === 'play' && !this.ui.modal) this.setView(v, wheel); };
@@ -334,6 +338,7 @@ class Game {
     const p = this.player.pos;
     let best = null, bd = 1e9;
     for (const it of this.structures.interact) {
+      if (it.lv !== undefined && it.lv !== this.player.level) continue;   // the bed is upstairs
       const d = Math.hypot(p.x - it.x, p.z - it.z);
       if (d < it.r && d < bd) { bd = d; best = it; }
     }
@@ -494,6 +499,7 @@ class Game {
   // ------------------------------------------------------------------ first / third person
   setView(v, fromWheel) {
     const fp = v === 'first', S = this.S;
+    if (!fp && this.house && this.house.indoor && this.mode === 'play') { this.toastOnce('fpIndoor', '在屋里只能用第一人称，出门就会切回来', '', 2.5); return; }
     S.settings.view = fp ? 'first' : 'third';
     if (this.rig.fp !== fp) {
       this.rig.setFP(fp, fromWheel);
@@ -505,6 +511,18 @@ class Game {
     }
     this.ui.renderViewState && this.ui.renderViewState();
     this.save();
+  }
+  // walking in through the door switches to first person, walking out restores the chosen view
+  applyHouseView() {
+    if (this.mode !== 'play' || !this.house) return;
+    const H = this.house, S = this.S, want = H.indoor || S.settings.view === 'first';
+    if (this.rig.fp === want) return;
+    this.rig.setFP(want);
+    this.ui.renderViewState && this.ui.renderViewState();
+    if (H.indoor) {
+      if (!S.flags) S.flags = {};
+      if (!S.flags.houseTip) { S.flags.houseTip = 1; this.ui.toast('进屋啦：屋里用第一人称。点一下画面锁定鼠标环顾，楼上的床可以睡觉，出门自动切回', '', '🏠'); }
+    }
   }
   toggleView(fromKey) {
     this.setView(this.rig.fp ? 'third' : 'first');
@@ -551,8 +569,12 @@ class Game {
     S.dayEarned = 0; S.stats.daysPlayed = S.day;
     this.farm.newDay(S.weather === 'rain');
     this.U.uWet.value = S.weather === 'rain' ? 1 : this.U.uWet.value * 0.4;
-    this.player.place(SPAWN.x, SPAWN.z, 0);
-    this.rig.yaw = 0.35; this.rig.pitch = 0.38; this.rig.fpPitch = 0.12; this.rig.inited = false;
+    // wake up in the bedroom, looking out of the south window
+    const w = this.house.wake;
+    this.player.place(w.x, w.z, w.yaw, w.y);
+    this.house.update(0, this.realT, this.player, this.camera, 0);
+    this.rig.yaw = w.yaw + Math.PI; this.rig.pitch = 0.38; this.rig.fpPitch = 0.04; this.rig.inited = false;
+    this.applyHouseView();
     this.env.snapWeather(S.weather);
     const ripe = [...this.farm.tiles.values()].filter(t => this.farm.ripe(t)).length;
     this.save();
@@ -602,7 +624,7 @@ class Game {
     if (this.noSave) return;
     const S = this.S, p = this.player;
     S.tiles = this.farm.serialize();
-    S.player = { x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2), yaw: +p.yaw.toFixed(3) };
+    S.player = { x: +p.pos.x.toFixed(2), z: +p.pos.z.toFixed(2), yaw: +p.yaw.toFixed(3), y: +p.pos.y.toFixed(2) };
     saveState(S);
   }
   // ------------------------------------------------------------------ per-frame
@@ -658,6 +680,10 @@ class Game {
       this.wadeT -= rdt;
       if (this.wadeT < 0) { this.wadeT = p.speed > 0.5 ? 0.35 : 1.4; this.water.addRipple(p.pos.x, p.pos.z, p.speed > 0.5 ? 0.4 : 0.15); }
     }
+    // ---- the house: indoor state, door, lamps; indoors the view is always first person ----
+    this.house.update(rdt, t, p, this.camera, this.env.nightK);
+    this.env.indoorK = this.mode === 'play' ? this.house.indoorK : 0;
+    this.applyHouseView();
     // ---- camera ----
     const U = this.U;
     if (this.mode === 'title') { this.titleCamera(t); U.uFocus.value.set(4, HOME_H + 1.5, -9); U.uOccR.value = 6.5; U.uOccK.value = 1.02; U.uNearF.value.set(1.4, 2.8); }

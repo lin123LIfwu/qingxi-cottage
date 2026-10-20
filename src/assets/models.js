@@ -1,4 +1,5 @@
-// Hand-held tool models (built in Blender, see /models in the repo), embedded as base64 GLB.
+// Hand-held tool models, the farmer and the timber house (built in Blender, see /models in the repo),
+// embedded as base64 GLB.
 // loadModels() must finish before the player / view model are built.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -11,9 +12,10 @@ import ROD from './rod.glb.js';
 import PACKET from './packet.glb.js';
 import ICONS from './cropIcons.js';
 import FARMER from './farmer.js';
+import HOUSE from './house.js';
 
 export const MODELS = {};
-const SRC = { hoe: HOE, can: CAN, rod: ROD, packet: PACKET, farmer: FARMER };
+const SRC = { hoe: HOE, can: CAN, rod: ROD, packet: PACKET, farmer: FARMER, house: HOUSE };
 
 function b64(s) {
   const bin = atob(s), u = new Uint8Array(bin.length);

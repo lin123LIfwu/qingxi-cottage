@@ -256,14 +256,17 @@ export class Terrain {
     const s = this.riverS[iz * V + ix];
     return { d, s, edge: d - this.riverHalfW(s) };
   }
-  // walkable ground: terrain or decks
-  groundHeight(x, z) {
+  // walkable ground: terrain or decks. `ref` = the walker's current foot height: decks marked
+  // `upper` (the house's first floor) only count for feet already near that floor, so people
+  // downstairs are not lifted onto the floor above their heads. Without `ref` they never count.
+  groundHeight(x, z, ref) {
     let h = this.heightAt(x, z);
     for (const dk of this.decks) {
       const dx = x - dk.cx, dz = z - dk.cz;
       const u = dx * dk.ax + dz * dk.az, v = -dx * dk.az + dz * dk.ax;
       if (Math.abs(u) <= dk.halfLen && Math.abs(v) <= dk.halfW) {
         const dh = dk.heightFn(u);
+        if (dk.upper && !(ref !== undefined && ref > dh - 0.6)) continue;
         if (dh > h - 0.5) h = Math.max(h, dh);
       }
     }

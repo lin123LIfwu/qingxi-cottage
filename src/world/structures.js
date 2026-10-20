@@ -3,7 +3,8 @@ import { GeoBuilder, mat4 } from '../util/geo.js';
 import { GLSL_NOISE } from '../util/glsl.js';
 import { mulberry32 } from '../util/noise.js';
 import { clamp, lerp, smoothstep } from '../util/math.js';
-import { CABIN, FARM, POND, SHOP, BIN, BARREL, HOME_H } from '../config.js';
+import { FARM, POND, SHOP, BIN, BARREL, HOME_H } from '../config.js';
+import { House } from './house.js';
 
 const C = (h) => new THREE.Color(h);
 const FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC","Noto Sans CJK SC",sans-serif';
@@ -62,7 +63,7 @@ export class Structures {
       glass: new THREE.MeshStandardMaterial({ color: '#33414d', roughness: 0.08, metalness: 0.1, emissive: '#ffb45e', emissiveIntensity: 0 }),
       glow: new THREE.MeshStandardMaterial({ color: '#fff0c8', roughness: 0.4, emissive: '#ffb04a', emissiveIntensity: 0.0 }),
     };
-    this.buildCabin();
+    this.house = new House(T, U, colliders, this);   // the timber house (model attached after loadModels)
     this.buildFence();
     this.buildBridge();
     this.buildDock();
@@ -85,202 +86,6 @@ export class Structures {
     const c = C(color);
     if (jit) c.multiplyScalar(1 + (this.rand() - 0.5) * 2 * jit);
     B.add(new THREE.BoxGeometry(w, h, d), { pos, rot, color: c, colorFn });
-  }
-
-  // ----------------------------------------------------------- cabin
-  buildCabin() {
-    const R = this.rand;
-    const W = CABIN.w, D = CABIN.d, hw = W / 2, hd = D / 2;
-    const FL = 0.45, WALL = 2.5, top = FL + WALL, logR = 0.17, step = 0.31;
-    const g = new THREE.Group(); g.position.set(CABIN.x, HOME_H, CABIN.z); this.group.add(g); this.cabin = g;
-    const wood = new GeoBuilder(), stone = new GeoBuilder(), roof = new GeoBuilder(), trim = new GeoBuilder(), glass = new GeoBuilder(), metal = new GeoBuilder(), glow = new GeoBuilder(), plain = new GeoBuilder();
-    // foundation
-    stone.add(new THREE.BoxGeometry(W + 0.12, FL, D + 0.12), { pos: [0, FL / 2 - 0.08, 0], color: '#6f6a63' });
-    const stoneRow = (len, fixed, axis, sign) => {
-      for (let row = 0; row < 2; row++) for (let t = -len / 2 + 0.2; t < len / 2 - 0.1; t += 0.42 + R() * 0.12) {
-        const y = 0.1 + row * 0.2;
-        const p = axis === 'x' ? [t + row * 0.18, y, fixed + sign * 0.08] : [fixed + sign * 0.08, y, t + row * 0.18];
-        const c = C('#8f877b').lerp(C('#a49d90'), R()).multiplyScalar(0.85 + R() * 0.25);
-        stone.add(new THREE.DodecahedronGeometry(1, 0), { pos: p, scale: axis === 'x' ? [0.22 + R() * 0.06, 0.12, 0.1] : [0.1, 0.12, 0.22 + R() * 0.06], rot: [R(), R(), R()], color: c });
-      }
-    };
-    stoneRow(W, hd, 'x', 1); stoneRow(W, -hd, 'x', -1); stoneRow(D, hw, 'z', 1); stoneRow(D, -hw, 'z', -1);
-    // openings: [axis, side(+/-), a0, a1, y0, y1]
-    const winY0 = FL + 0.85, winY1 = FL + 1.85;
-    const openings = [
-      ['x', 1, -0.62, 0.62, FL, FL + 2.08], ['x', 1, 1.42, 2.58, winY0, winY1], ['x', 1, -2.58, -1.42, winY0, winY1],
-      ['x', -1, -0.6, 0.6, winY0, winY1], ['z', 1, -0.55, 0.55, winY0, winY1], ['z', -1, -0.55, 0.55, winY0, winY1],
-    ];
-    const logC = C('#8a5b3a'), endC = C('#c99f6c');
-    const addLog = (axis, side, y, len) => {
-      const fixed = axis === 'x' ? hd * side : hw * side;
-      const ops = openings.filter(o => o[0] === axis && o[1] === side && y + logR > o[4] + 0.02 && y - logR < o[5] - 0.02);
-      let segs = [[-len / 2, len / 2]];
-      for (const o of ops) {
-        const out = [];
-        for (const [a, b] of segs) {
-          if (o[3] <= a || o[2] >= b) { out.push([a, b]); continue; }
-          if (o[2] - a > 0.12) out.push([a, o[2]]);
-          if (b - o[3] > 0.12) out.push([o[3], b]);
-        }
-        segs = out;
-      }
-      const lc = logC.clone().multiplyScalar(0.86 + R() * 0.26);
-      for (const [a, b] of segs) {
-        const L = b - a, c = (a + b) / 2;
-        const geo = new THREE.CylinderGeometry(logR, logR * 1.02, L, 10, 1);
-        const pos = axis === 'x' ? [c, y, fixed] : [fixed, y, c];
-        const rot = axis === 'x' ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0];
-        wood.add(geo, { pos, rot, color: lc, colorFn: (col, px, py, pz, nx, ny, nz) => { const ax = axis === 'x' ? Math.abs(nx) : Math.abs(nz); if (ax > 0.95) col.copy(endC).multiplyScalar(0.9 + R() * 0.15); } });
-      }
-    };
-    for (let k = 0; k < 8; k++) {
-      const y = FL + logR + k * step;
-      addLog('x', 1, y, W + 0.55); addLog('x', -1, y, W + 0.55);
-      const y2 = y + step / 2;
-      if (y2 + logR < top + 0.05) { addLog('z', 1, y2, D + 0.55); addLog('z', -1, y2, D + 0.55); }
-    }
-    // roof geometry
-    const th = (36 * Math.PI) / 180, s = Math.tan(th), ov = 0.55;
-    const ridgeY = top + hw * s;
-    // gables
-    for (const side of [1, -1]) {
-      for (let x = -hw + 0.14; x < hw; x += 0.27) {
-        const h = Math.max(0.05, (hw - Math.abs(x)) * s - 0.05);
-        this.box(wood, 0.25, h, 0.07, [x, top - 0.05 + h / 2, side * (hd + 0.05)], [0, 0, 0], '#a7774a', 0.08);
-      }
-      // fascia boards
-      const L = (hw + ov) / Math.cos(th);
-      for (const sx of [1, -1]) this.box(trim, L + 0.1, 0.22, 0.08, [sx * (hw + ov) / 2, ridgeY - (hw + ov) / 2 * s + 0.06, side * (hd + 0.62)], [0, 0, -sx * th], '#e9dcc0');
-    }
-    // attic round window (front)
-    glass.add(new THREE.CylinderGeometry(0.32, 0.32, 0.05, 20), { pos: [0, top + 0.95, hd + 0.1], rot: [Math.PI / 2, 0, 0] });
-    trim.add(new THREE.TorusGeometry(0.34, 0.06, 6, 20), { pos: [0, top + 0.95, hd + 0.12], color: '#e9dcc0' });
-    this.box(trim, 0.68, 0.05, 0.05, [0, top + 0.95, hd + 0.13], [0, 0, 0], '#e9dcc0');
-    this.box(trim, 0.05, 0.68, 0.05, [0, top + 0.95, hd + 0.13], [0, 0, 0], '#e9dcc0');
-    // roof underlay + shingles
-    const L = (hw + ov) / Math.cos(th), RD = D + 1.3, rz = 0.1;
-    for (const sx of [1, -1]) {
-      roof.add(new THREE.BoxGeometry(L, 0.12, RD), { pos: [sx * (hw + ov) / 2, ridgeY - (hw + ov) / 2 * s + 0.08, rz], rot: [0, 0, -sx * th], color: '#5c2e25' });
-      const rows = 12;
-      for (let r = 0; r < rows; r++) {
-        const t = (r + 0.5) / rows;
-        const dist = t * L;
-        const cx = sx * Math.cos(th) * dist, cy = ridgeY - Math.sin(th) * dist + 0.17;
-        const n = 11;
-        for (let k = 0; k < n; k++) {
-          const z = rz - RD / 2 + (k + 0.5 + (r % 2) * 0.5) * (RD / n);
-          if (z > rz + RD / 2 - 0.1) continue;
-          const c = C('#a64b3b').lerp(C('#c4684d'), R()).multiplyScalar(0.85 + R() * 0.25);
-          roof.add(new THREE.BoxGeometry(L / rows + 0.08, 0.05, RD / n - 0.035), { pos: [cx, cy, z], rot: [0, 0, -sx * th + (R() - 0.5) * 0.03 - sx * 0.05], color: c });
-        }
-      }
-    }
-    roof.add(new THREE.BoxGeometry(0.26, 0.26, RD + 0.1), { pos: [0, ridgeY + 0.16, rz], rot: [0, 0, Math.PI / 4], color: '#6e3428' });
-    // door
-    const dz = hd + 0.02;
-    for (let i = 0; i < 4; i++) this.box(wood, 0.285, 2.04, 0.07, [-0.43 + i * 0.287, FL + 1.02, dz], [0, 0, 0], '#7b4a2c', 0.07);
-    for (const y of [FL + 0.45, FL + 1.62]) this.box(wood, 1.12, 0.14, 0.05, [0, y, dz + 0.055], [0, 0, 0], '#6a3e24');
-    this.box(wood, 0.12, 1.32, 0.04, [0, FL + 1.03, dz + 0.06], [0, 0, 0.72], '#6a3e24');
-    metal.add(new THREE.SphereGeometry(0.05, 8, 6), { pos: [0.4, FL + 1.0, dz + 0.1], color: '#d9b25a' });
-    for (const [w, h, x, y] of [[0.14, 2.2, -0.68, FL + 1.1], [0.14, 2.2, 0.68, FL + 1.1], [1.5, 0.16, 0, FL + 2.16]]) this.box(trim, w, h, 0.12, [x, y, hd + 0.12], [0, 0, 0], '#e9dcc0');
-    // heart
-    plain.add(new THREE.SphereGeometry(0.06, 8, 6), { pos: [-0.035, FL + 1.75, dz + 0.1], scale: [1, 1, 0.4], color: '#d94a5a' });
-    plain.add(new THREE.SphereGeometry(0.06, 8, 6), { pos: [0.035, FL + 1.75, dz + 0.1], scale: [1, 1, 0.4], color: '#d94a5a' });
-    plain.add(new THREE.ConeGeometry(0.085, 0.1, 8), { pos: [0, FL + 1.69, dz + 0.1], rot: [0, 0, Math.PI], scale: [1, 1, 0.4], color: '#d94a5a' });
-    // windows
-    const addWindow = (cx, cy, cz, axis, sgn, flowers) => {
-      const ww = 1.12, wh = 1.0;
-      const P = (a, y, d) => axis === 'x' ? [cx + a, y, cz + d * sgn] : [cx + d * sgn, y, cz + a];
-      const RY = axis === 'x' ? 0 : Math.PI / 2;
-      glass.add(new THREE.BoxGeometry(ww, wh, 0.04), { pos: P(0, cy, -0.02), rot: [0, RY, 0] });
-      for (const [w, h, a, y] of [[ww + 0.16, 0.1, 0, cy + wh / 2], [ww + 0.16, 0.12, 0, cy - wh / 2], [0.1, wh, -ww / 2, cy], [0.1, wh, ww / 2, cy], [0.06, wh, 0, cy], [ww, 0.06, 0, cy]])
-        this.box(trim, w, h, 0.09, P(a, y, 0.05), [0, RY, 0], '#efe3c8');
-      for (const sd of [-1, 1]) {
-        this.box(plain, 0.46, wh + 0.12, 0.05, P(sd * (ww / 2 + 0.3), cy, 0.12), [0, RY, 0], '#5d8c63', 0.05);
-        for (const y of [cy - 0.25, cy + 0.25]) this.box(plain, 0.4, 0.05, 0.03, P(sd * (ww / 2 + 0.3), y, 0.155), [0, RY, 0], '#4b7651');
-      }
-      if (flowers) {
-        this.box(wood, ww + 0.15, 0.22, 0.26, P(0, cy - wh / 2 - 0.14, 0.2), [0, RY, 0], '#8b5a39');
-        this.box(plain, ww + 0.05, 0.04, 0.2, P(0, cy - wh / 2 - 0.02, 0.2), [0, RY, 0], '#5a3d26');
-        const cols = ['#e94b5f', '#ffd447', '#ff8fb8', '#ffffff', '#b28cff'];
-        for (let i = 0; i < 9; i++) {
-          const a = -ww / 2 + 0.1 + i * (ww - 0.2) / 8;
-          plain.add(new THREE.IcosahedronGeometry(0.075, 0), { pos: P(a, cy - wh / 2 + 0.07 + R() * 0.05, 0.2 + (R() - 0.5) * 0.1), color: R() < 0.45 ? '#4f8f3a' : cols[Math.floor(R() * cols.length)] });
-        }
-      }
-    };
-    addWindow(2.0, FL + 1.35, hd, 'x', 1, true); addWindow(-2.0, FL + 1.35, hd, 'x', 1, true);
-    addWindow(0, FL + 1.35, -hd, 'x', -1, false);
-    addWindow(hw, FL + 1.35, 0, 'z', 1, false); addWindow(-hw, FL + 1.35, 0, 'z', -1, true);
-    // porch
-    const pz0 = hd + 0.1, pz1 = hd + 1.75;
-    for (let z = pz0 + 0.12; z < pz1; z += 0.25) this.box(wood, W + 0.6, 0.07, 0.22, [0, FL - 0.03, z], [0, 0, 0], '#a1734a', 0.09);
-    this.box(wood, W + 0.6, FL - 0.07, pz1 - pz0, [0, (FL - 0.07) / 2 - 0.02, (pz0 + pz1) / 2], [0, 0, 0], '#6d4a30');
-    for (const [y, z0, z1] of [[0.3, pz1, pz1 + 0.32], [0.15, pz1 + 0.32, pz1 + 0.64]]) {
-      this.box(wood, 1.7, 0.07, z1 - z0, [0, y - 0.035, (z0 + z1) / 2], [0, 0, 0], '#a1734a', 0.05);
-      this.box(wood, 1.7, y - 0.07, z1 - z0, [0, (y - 0.07) / 2, (z0 + z1) / 2], [0, 0, 0], '#6d4a30');
-    }
-    const postZ = pz1 - 0.12, eave = 2.62;
-    for (const sx of [-1, 1]) {
-      wood.add(new THREE.CylinderGeometry(0.09, 0.1, eave - FL, 8), { pos: [sx * (hw + 0.1), FL + (eave - FL) / 2, postZ], color: '#8a5b3a' });
-      this.col.addCircle(CABIN.x + sx * (hw + 0.1), CABIN.z + postZ, 0.16, 'post');
-    }
-    this.box(wood, W + 0.5, 0.18, 0.16, [0, eave + 0.05, postZ], [0, 0, 0], '#7a4f32');
-    // porch shed roof
-    const prTh = 0.2, prL = 2.15, prZc = hd + prL / 2 - 0.05, prY = top - 0.12 - Math.tan(prTh) * (prL / 2);
-    roof.add(new THREE.BoxGeometry(W + 0.9, 0.1, prL), { pos: [0, prY, prZc], rot: [prTh, 0, 0], color: '#5c2e25' });
-    for (let r = 0; r < 5; r++) for (let k = 0; k < 12; k++) {
-      const zz = hd + (r + 0.5) * prL / 5 - 0.05;
-      const yy = top - 0.12 - Math.tan(prTh) * ((r + 0.5) * prL / 5) + 0.07;
-      const x = -(W + 0.9) / 2 + (k + 0.5 + (r % 2) * 0.5) * (W + 0.9) / 12;
-      if (x > (W + 0.9) / 2 - 0.1) continue;
-      roof.add(new THREE.BoxGeometry((W + 0.9) / 12 - 0.035, 0.05, prL / 5 + 0.08), { pos: [x, yy, zz], rot: [prTh + 0.04, 0, 0], color: C('#a64b3b').lerp(C('#c4684d'), R()).multiplyScalar(0.85 + R() * 0.25) });
-    }
-    // bench on porch
-    this.box(wood, 1.3, 0.07, 0.4, [-2.2, FL + 0.45, hd + 0.5], [0, 0, 0], '#9c6b43');
-    this.box(wood, 1.3, 0.35, 0.06, [-2.2, FL + 0.7, hd + 0.3], [-0.12, 0, 0], '#9c6b43');
-    for (const sx of [-0.55, 0.55]) this.box(wood, 0.07, 0.45, 0.36, [-2.2 + sx, FL + 0.22, hd + 0.5], [0, 0, 0], '#7a4f32');
-    // lantern by the door
-    metal.add(new THREE.BoxGeometry(0.06, 0.06, 0.32), { pos: [0.95, FL + 2.0, hd + 0.3], color: '#2b2b2b' });
-    metal.add(new THREE.CylinderGeometry(0.13, 0.1, 0.06, 8), { pos: [0.95, FL + 1.98, hd + 0.44], color: '#2b2b2b' });
-    glow.add(new THREE.CylinderGeometry(0.09, 0.09, 0.22, 8), { pos: [0.95, FL + 1.82, hd + 0.44] });
-    metal.add(new THREE.ConeGeometry(0.14, 0.12, 8), { pos: [0.95, FL + 2.0, hd + 0.44], color: '#2b2b2b' });
-    const lamp = new THREE.PointLight('#ffb35c', 0, 11, 1.6);
-    lamp.position.set(0.95, FL + 1.75, hd + 0.62); g.add(lamp); this.lights.push({ l: lamp, k: 7 });
-    // chimney
-    const chx = hw + 0.44, chz = -0.95, chH = ridgeY + 0.75;
-    stone.add(new THREE.BoxGeometry(0.78, chH, 0.82), { pos: [chx, chH / 2, chz], color: '#6d675f' });
-    for (let y = 0.1; y < chH; y += 0.22) for (const [dx, dz, w, d] of [[0.39, 0, 0.12, 0.3], [-0.39, 0, 0.12, 0.3], [0, 0.41, 0.3, 0.12], [0, -0.41, 0.3, 0.12]]) {
-      for (const o of [-0.22, 0.22]) {
-        const p = [chx + dx + (dz ? o + (R() - 0.5) * 0.06 : 0), y + (R() - 0.5) * 0.03, chz + dz + (dx ? o + (R() - 0.5) * 0.06 : 0)];
-        stone.add(new THREE.DodecahedronGeometry(1, 0), { pos: p, scale: [dz ? 0.2 : w, 0.11, dx ? 0.2 : d], rot: [R() * 0.4, R(), R() * 0.4], color: C('#8f877b').lerp(C('#aaa293'), R()).multiplyScalar(0.85 + R() * 0.2) });
-      }
-    }
-    this.box(stone, 0.95, 0.14, 0.98, [chx, chH + 0.02, chz], [0, 0, 0], '#5f5952');
-    this.chimneyTop = new THREE.Vector3(CABIN.x + chx, HOME_H + chH + 0.15, CABIN.z + chz);
-    this.col.addBox(CABIN.x + chx, CABIN.z + chz, 0.42, 0.44, 0, 'chimney');
-    // firewood stack
-    for (let r = 0; r < 3; r++) for (let k = 0; k < 6 - r; k++) {
-      const z = -1.4 + (k + r * 0.5) * 0.24, y = 0.13 + r * 0.21;
-      wood.add(new THREE.CylinderGeometry(0.11, 0.11, 0.85, 8), { pos: [-hw - 0.75, y, z], rot: [0, 0, Math.PI / 2], color: C('#7d5235').multiplyScalar(0.85 + R() * 0.3), colorFn: (c, x, yy, zz, nx) => { if (Math.abs(nx) > 0.9) c.set('#d6b07a'); } });
-    }
-    this.col.addBox(CABIN.x - hw - 0.75, CABIN.z - 0.8, 0.45, 0.8, 0, 'wood');
-    // meshes
-    this.mesh(wood, this.mats.wood, true, g); this.mesh(stone, this.mats.stone, true, g); this.mesh(roof, this.mats.roof, true, g);
-    this.mesh(trim, this.mats.plain, true, g); this.mesh(plain, this.mats.plain, true, g); this.mesh(metal, this.mats.metal, true, g);
-    const gm = this.mesh(glass, this.mats.glass, false, g); gm.receiveShadow = false;
-    this.mesh(glow, this.mats.glow, false, g);
-    // interior warm light to make windows glow nicely
-    // colliders, decks, interaction
-    this.col.addBox(CABIN.x, CABIN.z, hw + 0.3, hd + 0.25, 0, 'cabin');
-    const T = this.T;
-    T.decks.push({ cx: CABIN.x, cz: CABIN.z + (pz0 + pz1) / 2, ax: 1, az: 0, halfLen: hw + 0.3, halfW: (pz1 - pz0) / 2 + 0.05, heightFn: () => HOME_H + FL, type: 'wood' });
-    T.decks.push({ cx: CABIN.x, cz: CABIN.z + pz1 + 0.16, ax: 1, az: 0, halfLen: 0.85, halfW: 0.16, heightFn: () => HOME_H + 0.3, type: 'wood' });
-    T.decks.push({ cx: CABIN.x, cz: CABIN.z + pz1 + 0.48, ax: 1, az: 0, halfLen: 0.85, halfW: 0.16, heightFn: () => HOME_H + 0.15, type: 'wood' });
-    this.noGrassRects.push([CABIN.x - hw - 1.3, CABIN.z - hd - 0.4, CABIN.x + hw + 1.0, CABIN.z + pz1 + 0.7]);
-    this.interact.push({ id: 'bed', x: CABIN.x, z: CABIN.z + hd + 0.7, r: 1.5, label: '回家睡觉' });
-    this.windowPos = new THREE.Vector3(CABIN.x, HOME_H + 1.6, CABIN.z + hd + 0.5);
   }
 
   // ----------------------------------------------------------- fence

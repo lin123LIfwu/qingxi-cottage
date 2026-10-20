@@ -236,12 +236,16 @@ export class Environment {
     const dayHemi = new THREE.Color('#cfe0ff'), nightHemi = new THREE.Color('#4a5f9a');
     this.hemi.color.copy(dayHemi).lerp(nightHemi, night);
     this.hemi.groundColor.set('#6b7a45').lerp(new THREE.Color('#1c2433'), night);
-    this.hemi.intensity = lerp(0.24, 0.55, night) * lerp(1, 0.9, wx.dark);
+    // indoors (set by main.js from the house): the sky reaches the rooms only through the windows,
+    // so ambient light drops while the eye adapts (exposure up by day, down at night under lamps)
+    const ik = this.indoorK || 0;
+    this.hemi.intensity = lerp(0.24, 0.55, night) * lerp(1, 0.9, wx.dark) * lerp(1, 0.72, ik);
     // image-based ambient is normalised to a soft fill; lower than before so sunlit and shaded
     // surfaces separate clearly (overcast days keep more fill since the sun is dimmed)
     // a low sun lights the ground weakly while the open sky stays bright: lift the fill a little
-    const ambTarget = lerp(0.3, 0.05, night) * lerp(1, 1.35, wx.dark) * (1 + 0.3 * this.sunsetK * (1 - night));
-    this.exposure = lerp(lerp(0.72, 0.82, this.sunsetK), 1.9, night) * lerp(1, 1.25, wx.dark);
+    const ambTarget = lerp(0.3, 0.05, night) * lerp(1, 1.35, wx.dark) * (1 + 0.3 * this.sunsetK * (1 - night)) * lerp(1, 0.62, ik);
+    const outExp = lerp(lerp(0.72, 0.82, this.sunsetK), 1.9, night) * lerp(1, 1.25, wx.dark);
+    this.exposure = lerp(outExp, lerp(outExp * 1.85, 1.3, night), ik);
 
     // ---- atmosphere: morning valley mist, clear afternoons, grey rain ----
     const mist = smoothstep(4.5, 6.2, hour) * smoothstep(9.5, 6.8, hour);

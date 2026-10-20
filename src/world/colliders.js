@@ -1,4 +1,6 @@
-// 2D collision world: circles and oriented boxes in a spatial hash.
+﻿// 2D collision world: circles and oriented boxes in a spatial hash.
+// Optional floor tag lv (0 = ground floor / outside, 1 = upper floor of the house): a collider with a
+// tag only blocks queries made with the same level; untagged colliders (and untagged queries) see everything.
 export class Colliders {
   constructor(cell = 4) { this.cell = cell; this.map = new Map(); this.all = []; this._stamp = 0; }
   _k(ix, iz) { return (ix + 512) * 4096 + (iz + 512); }
@@ -13,11 +15,11 @@ export class Colliders {
     this.all.push(c);
     return c;
   }
-  addCircle(x, z, r, tag = null) { return this._insert({ t: 0, x, z, r, tag, m: 0 }, x - r, z - r, x + r, z + r); }
-  addBox(cx, cz, hx, hz, rot = 0, tag = null) {
+  addCircle(x, z, r, tag = null, lv) { return this._insert({ t: 0, x, z, r, tag, m: 0, lv }, x - r, z - r, x + r, z + r); }
+  addBox(cx, cz, hx, hz, rot = 0, tag = null, lv) {
     const c = Math.cos(rot), s = Math.sin(rot);
     const ex = Math.abs(c) * hx + Math.abs(s) * hz, ez = Math.abs(s) * hx + Math.abs(c) * hz;
-    return this._insert({ t: 1, x: cx, z: cz, hx, hz, c, s, tag, m: 0 }, cx - ex, cz - ez, cx + ex, cz + ez);
+    return this._insert({ t: 1, x: cx, z: cz, hx, hz, c, s, tag, m: 0, lv }, cx - ex, cz - ez, cx + ex, cz + ez);
   }
   // segment as thin box
   addWall(ax, az, bx, bz, thick = 0.15, tag = null) {
@@ -60,11 +62,12 @@ export class Colliders {
     // back to world (rotate by +rot)
     return [ox * c.c + oz * c.s, -ox * c.s + oz * c.c];
   }
-  resolve(p, r) {
+  _skip(c, lv) { return c.off || (lv !== undefined && c.lv !== undefined && c.lv !== lv); }
+  resolve(p, r, lv) {
     for (let it = 0; it < 3; it++) {
       let moved = false;
       for (const c of this.query(p.x, p.z, r + 0.5)) {
-        if (c.off) continue;
+        if (this._skip(c, lv)) continue;
         const pv = this._push(c, p.x, p.z, r);
         if (pv) { p.x += pv[0]; p.z += pv[1]; moved = true; }
       }
@@ -72,8 +75,8 @@ export class Colliders {
     }
     return p;
   }
-  hit(x, z, r) {
-    for (const c of this.query(x, z, r + 0.5)) if (!c.off && this._push(c, x, z, r)) return c;
+  hit(x, z, r, lv) {
+    for (const c of this.query(x, z, r + 0.5)) if (!this._skip(c, lv) && this._push(c, x, z, r)) return c;
     return null;
   }
 }

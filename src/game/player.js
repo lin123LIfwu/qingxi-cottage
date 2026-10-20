@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+﻿import * as THREE from 'three';
 import { clamp, lerp, damp, dampAngle } from '../util/math.js';
 import { toolModel, farmerModel, cropIconNow } from '../assets/models.js';
 import { Human } from './human.js';
@@ -18,6 +18,8 @@ export class Player {
     // fishing state mirrored in by main.js / fishing.js
     this.charge = 0; this.lineOut = false; this.reelK = 0; this.rodBend = 0; this.rodK = 0;
     this.yawPrev = null; this.yawRate = 0;
+    // the timber house (set by main.js): floor level 0 / 1 and indoor rules
+    this.house = null; this.level = 0;
     this.build();
   }
 
@@ -89,9 +91,11 @@ export class Player {
       else if (o.userData.mat0) { o.material = o.userData.mat0; delete o.userData.mat0; }
     });
   }
-  place(x, z, yaw) {
+  place(x, z, yaw, y) {
     // never drop the player into deep water / inside a wall: spiral out to the nearest valid spot
-    const ok = (px, pz) => { const q = { x: px, z: pz }; this.col.resolve(q, 0.3); return Math.hypot(q.x - px, q.z - pz) < 1e-3 && this.canStand(px, pz, this.T.groundHeight(px, pz)); };
+    // (y: optional foot height, e.g. waking up on the upper floor of the house)
+    const lvAt = (px, pz) => this.house ? this.house.levelOf(px, pz, this.T.groundHeight(px, pz, y)) : 0;
+    const ok = (px, pz) => { const q = { x: px, z: pz }; this.col.resolve(q, 0.3, lvAt(px, pz)); return Math.hypot(q.x - px, q.z - pz) < 1e-3 && this.canStand(px, pz, this.T.groundHeight(px, pz, y)); };
     if (!ok(x, z)) {
       search: for (let r = 0.5; r < 30; r += 0.5) {
         for (let a = 0; a < 24; a++) {
@@ -100,7 +104,8 @@ export class Player {
         }
       }
     }
-    this.pos.set(x, this.T.groundHeight(x, z), z); this.yaw = yaw; this.vel.set(0, 0, 0); this.vy = 0;
+    this.pos.set(x, this.T.groundHeight(x, z, y), z); this.yaw = yaw; this.vel.set(0, 0, 0); this.vy = 0;
+    this.level = lvAt(x, z); this.grounded = true;
     this.root.position.copy(this.pos); this.root.rotation.y = yaw;
   }
   forward(out = new THREE.Vector3()) { return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); }
@@ -114,8 +119,10 @@ export class Player {
   canStand(x, z, fromH) {
     const T = this.T;
     if (r6(x, z) > PLAY_R) return false;
-    const gh = T.groundHeight(x, z);
+    const gh = T.groundHeight(x, z, fromH);
     const deck = T.onDeck(x, z);
+    // indoors nothing to fall off (the stair opening has a rail, but just in case)
+    if (this.house && this.house.inside(x, z) && gh < fromH - 0.6) return false;
     const lv = T.waterLevelAt(x, z);
     if (!deck && lv > -40 && lv - gh > 0.78) return false;
     if (!deck && gh - fromH > 0.45) return false;
@@ -136,7 +143,8 @@ export class Player {
       }
     }
     const wade = clamp(this.waterDepth / 0.75, 0, 1);
-    const maxSp = (input.run ? 6.0 : 3.4) * lerp(1, 0.5, wade);
+    const indoor = !!(this.house && this.house.inside(this.pos.x, this.pos.z));
+    const maxSp = (input.run ? 6.0 : 3.4) * lerp(1, 0.5, wade) * (indoor ? 0.72 : 1);
     const tvx = mx * maxSp, tvz = mz * maxSp;
     const acc = (mx || mz) ? 10 : 12;
     this.vel.x = damp(this.vel.x, tvx, acc, dt); this.vel.z = damp(this.vel.z, tvz, acc, dt);
@@ -145,7 +153,7 @@ export class Player {
     else if (mx || mz) this.yaw = dampAngle(this.yaw, Math.atan2(mx, mz), 12, dt);
     // ---- horizontal move with checks ----
     const cur = this.pos;
-    const curH = T.groundHeight(cur.x, cur.z);
+    const curH = T.groundHeight(cur.x, cur.z, cur.y);
     let nx = cur.x + this.vel.x * dt, nz = cur.z + this.vel.z * dt;
     const footH = this.grounded ? curH : Math.max(curH, cur.y);
     if (!this.canStand(nx, nz, footH)) {
@@ -154,14 +162,15 @@ export class Player {
       else { nx = cur.x; nz = cur.z; }
     }
     const p = { x: nx, z: nz };
-    this.col.resolve(p, 0.3);
+    this.col.resolve(p, 0.3, this.level);
     if (!this.canStand(p.x, p.z, footH)) { p.x = cur.x; p.z = cur.z; }
     const moved = Math.hypot(p.x - cur.x, p.z - cur.z);
     cur.x = p.x; cur.z = p.z;
     this.speed = moved / Math.max(dt, 1e-4);
     // ---- vertical ----
-    const gh = T.groundHeight(cur.x, cur.z);
-    if (input.jump && this.grounded && !this.action && wade < 0.6) { this.vy = 6.0; this.grounded = false; this.onJump && this.onJump(); }
+    const gh = T.groundHeight(cur.x, cur.z, cur.y);
+    const noJump = this.house && this.house.noJump(cur.x, cur.z);
+    if (input.jump && this.grounded && !this.action && wade < 0.6 && !noJump) { this.vy = 6.0; this.grounded = false; this.onJump && this.onJump(); }
     if (!this.grounded) {
       this.vy -= 19 * dt; cur.y += this.vy * dt;
       if (cur.y <= gh) { cur.y = gh; this.grounded = true; if (this.vy < -3) this.onLand && this.onLand(); this.vy = 0; }
@@ -169,6 +178,7 @@ export class Player {
       if (gh < cur.y - 0.35) { this.grounded = false; this.vy = 0; }
       else cur.y = damp(cur.y, gh, 30, dt);
     }
+    if (this.house) this.level = this.house.levelOf(cur.x, cur.z, cur.y);
     // ---- environment info ----
     const lv = T.waterLevelAt(cur.x, cur.z);
     const deck = T.onDeck(cur.x, cur.z);
@@ -203,7 +213,7 @@ export class Player {
       // ground height under a foot (character space), relative to the root
       ground: (lx, lz) => {
         const p = this.pos, cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
-        return this.T.groundHeight(p.x + cy * lx + sy * lz, p.z - sy * lx + cy * lz) - p.y;
+        return this.T.groundHeight(p.x + cy * lx + sy * lz, p.z - sy * lx + cy * lz, p.y) - p.y;
       },
     });
     st.speed = this.speed; st.vx = c * vx - s * vz; st.vz = s * vx + c * vz;
